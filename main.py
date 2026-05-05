@@ -1,68 +1,129 @@
+#!/usr/bin/env python3
 """
-main.py
-Real‑time chord detector from system audio (or mic).
-Usage:
-    python main.py                 # auto‑detect monitor source
-    python main.py list            # show available devices
-    python main.py 3               # use device index 3
+main.py – Rhythm game with keyboard and moving lanes (curses UI).
 """
 
+import curses
+import json
+import os
 import sys
 import time
 
-import sounddevice as sd
+from game.engine import Engine
+from game.interface import CursesUI
 
-from audio_capture import start_stream
-from chord_detector import detect_chord
-
-last_chord = None
-last_print_time = 0
+SONGS_JSON_DIR = "songs/json"
+SONGS_MID_DIR = "songs/mid"
 
 
-def process_chunk(audio_chunk, sample_rate):
-    global last_chord, last_print_time
-    chord, confidence = detect_chord(audio_chunk, sample_rate)
-    current_time = time.time()
-    if chord != last_chord or (current_time - last_print_time > 0.5):
-        print(f"{chord} (conf: {confidence:.2f})")
-        last_chord = chord
-        last_print_time = current_time
+def load_chart(filename):
+    with open(filename) as f:
+        return json.load(f)
 
 
-def list_devices():
-    print("Available sound devices:")
-    print(sd.query_devices())
+def list_available_songs():
+    json_files = [f for f in os.listdir(SONGS_JSON_DIR) if f.endswith(".json")]
+    return sorted(json_files)
+
+
+def find_midi_for_chart(chart_name):
+    base = os.path.splitext(chart_name)[0]
+    mid_path = os.path.join(SONGS_MID_DIR, base + ".mid")
+    return mid_path if os.path.exists(mid_path) else None
+
+
+def choose_song():
+    songs = list_available_songs()
+    if not songs:
+        print("No songs found in songs/json/. Run 'python songs/converter.py' first.")
+        sys.exit(1)
+    print("Available songs:")
+    for i, song in enumerate(songs):
+        print(f"  {i + 1}. {os.path.splitext(song)[0]}")
+    while True:
+        try:
+            choice = input("Select a song number (or 'q' to quit): ")
+            if choice.lower() == "q":
+                sys.exit(0)
+            idx = int(choice) - 1
+            if 0 <= idx < len(songs):
+                return songs[idx]
+            else:
+                print("Invalid choice.")
+        except ValueError:
+            print("Enter a number.")
+
+
+def countdown(ui, seconds=3):
+    for i in range(seconds, 0, -1):
+        for _ in range(25):  # ~25 fps
+            ui.show_message(f"Starting in {i}...")
+            ui.draw_frame(Engine([]))  # dummy engine
+            time.sleep(0.04)
+    ui.show_message("Go!")
+
+
+def game_loop(stdscr):
+    # Song selection (terminal is still normal; we do this before curses init)
+    # We need to do it before entering curses, so we call choose_song() outside,
+    # then pass the file names in. That means main() will handle song selection,
+    # then launch curses wrapper with those params.
+    pass  # We'll restructure
 
 
 def main():
-    device = None  # None means auto‑detect
+    if len(sys.argv) >= 2:
+        chart_file = sys.argv[1]
+        midi_file = sys.argv[2] if len(sys.argv) > 2 else None
+    else:
+        # Select song before entering curses (because curses messes with stdin)
+        chart_name = choose_song()
+        chart_file = os.path.join(SONGS_JSON_DIR, chart_name)
+        midi_file = find_midi_for_chart(chart_name)
 
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "list":
-            list_devices()
-            return
-        else:
-            try:
-                device = int(sys.argv[1])
-                print(f"Using device index {device}")
-            except ValueError:
-                device = sys.argv[1]  # try as string name
-                print(f"Using device '{device}'")
+    chart = load_chart(chart_file)
+    events = chart["events"]
+    song_name = chart.get("song", os.path.basename(chart_file))
 
-    print("Starting chord detector. Play audio (e.g., YouTube) now...")
-    print("Press Ctrl+C to stop.\n")
+    # Start curses and run the game
+    curses.wrapper(launch_game, chart_file, midi_file, events)
 
-    stream = start_stream(
-        process_chunk, sample_rate=48000, block_duration=0.1, device=device
-    )
 
-    try:
-        while True:
-            time.sleep(0.1)
-    except KeyboardInterrupt:
-        print("\nStopped.")
-        stream.stop()
-        stream.close()
+def launch_game(stdscr, chart_file, midi_file, events):
+    engine = Engine(events)
+    ui = CursesUI(stdscr)
+    ui.setup()
+
+    ui.show_message(f"Loaded: {chart_file} ({len(events)} notes)")
+    ui.draw_frame(engine)
+    time.sleep(0.5)
+
+    # Countdown
+    countdown(ui)
+
+    if midi_file:
+        engine.start_music(midi_file)
+
+    engine.start_game(time.time())
+    game_keys = set(e["key"] for e in events)
+
+    # Main loop
+    running = True
+    while running:
+        key = ui.get_keypress()
+        if key is not None:
+            if key == "q":
+                running = False
+                break
+            if key in game_keys:
+                if engine.try_hit(key):
+                    ui.show_message("✅ Hit!")
+                else:
+                    ui.show_message("❌ Miss")
+        engine.update()
+        ui.draw_frame(engine)
+
+    engine.stop_music()
 
 
 if __name__ == "__main__":
