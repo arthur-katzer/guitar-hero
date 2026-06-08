@@ -1,0 +1,340 @@
+
+<style>
+.phase { border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 1rem 1.25rem; margin-bottom: 12px; background: var(--color-background-primary); }
+.phase-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; cursor: pointer; user-select: none; }
+.phase-title { font-size: 15px; font-weight: 500; color: var(--color-text-primary); flex: 1; }
+.phase-dates { font-size: 12px; color: var(--color-text-secondary); }
+.phase-progress { font-size: 12px; color: var(--color-text-tertiary); margin-left: 4px; }
+.badge { font-size: 11px; font-weight: 500; padding: 3px 10px; border-radius: 99px; white-space: nowrap; }
+.badge-purple { background: #EEEDFE; color: #3C3489; }
+.badge-teal   { background: #E1F5EE; color: #085041; }
+.badge-amber  { background: #FAEEDA; color: #633806; }
+.badge-coral  { background: #FAECE7; color: #712B13; }
+@media (prefers-color-scheme: dark) {
+  .badge-purple { background: #3C3489; color: #CECBF6; }
+  .badge-teal   { background: #085041; color: #9FE1CB; }
+  .badge-amber  { background: #633806; color: #FAC775; }
+  .badge-coral  { background: #712B13; color: #F5C4B3; }
+}
+.task-group { margin-bottom: 10px; }
+.task-group-title { font-size: 13px; font-weight: 500; color: var(--color-text-primary); margin: 0 0 6px 0; display: flex; align-items: center; gap: 6px; }
+.task-group-title i { font-size: 15px; }
+.icon-purple { color: #534AB7; } .icon-teal { color: #0F6E56; } .icon-amber { color: #854F0B; } .icon-coral { color: #993C1D; }
+@media (prefers-color-scheme: dark) {
+  .icon-purple { color: #AFA9EC; } .icon-teal { color: #5DCAA5; } .icon-amber { color: #EF9F27; } .icon-coral { color: #F0997B; }
+}
+.subtask { display: flex; align-items: flex-start; gap: 8px; padding: 5px 0 5px 4px; border-top: 0.5px solid var(--color-border-tertiary); cursor: pointer; border-radius: 4px; transition: background 0.1s; }
+.subtask:first-of-type { border-top: none; }
+.subtask:hover { background: var(--color-background-secondary); }
+.subtask input[type=checkbox] { margin-top: 2px; flex-shrink: 0; accent-color: #534AB7; width: 14px; height: 14px; cursor: pointer; }
+.subtask-text { font-size: 13px; color: var(--color-text-secondary); line-height: 1.5; }
+.subtask-text.done { text-decoration: line-through; color: var(--color-text-tertiary); }
+.code-hint { font-family: var(--font-mono); font-size: 11px; background: var(--color-background-secondary); border: 0.5px solid var(--color-border-tertiary); border-radius: 4px; padding: 1px 5px; color: var(--color-text-secondary); white-space: nowrap; }
+.note { font-size: 12px; color: var(--color-text-tertiary); padding: 4px 0 4px 22px; font-style: italic; }
+.deliverable { margin-top: 10px; font-size: 12px; padding: 6px 10px; border-radius: var(--border-radius-md); border-left: 3px solid; }
+.deliverable-purple { background: #EEEDFE; color: #3C3489; border-color: #534AB7; }
+.deliverable-teal   { background: #E1F5EE; color: #085041; border-color: #0F6E56; }
+.deliverable-amber  { background: #FAEEDA; color: #633806; border-color: #854F0B; }
+.deliverable-coral  { background: #FAECE7; color: #712B13; border-color: #993C1D; }
+@media (prefers-color-scheme: dark) {
+  .deliverable-purple { background: #26215C; color: #CECBF6; border-color: #AFA9EC; }
+  .deliverable-teal   { background: #04342C; color: #9FE1CB; border-color: #5DCAA5; }
+  .deliverable-amber  { background: #412402; color: #FAC775; border-color: #EF9F27; }
+  .deliverable-coral  { background: #4A1B0C; color: #F5C4B3; border-color: #F0997B; }
+}
+.progress-bar-wrap { height: 4px; background: var(--color-background-secondary); border-radius: 2px; margin-bottom: 12px; overflow: hidden; }
+.progress-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+.pbar-purple { background: #534AB7; } .pbar-teal { background: #0F6E56; } .pbar-amber { background: #854F0B; } .pbar-coral { background: #993C1D; }
+.sep { border: none; border-top: 0.5px solid var(--color-border-tertiary); margin: 10px 0; }
+.ask-btn { font-size: 12px; color: var(--color-text-info); background: none; border: none; cursor: pointer; padding: 0; }
+.ask-btn:hover { text-decoration: underline; }
+</style>
+
+<h2 class="sr-only">Roadmap detalhado — detecção de acordes em tempo real</h2>
+
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+  <span style="font-size:13px;color:var(--color-text-secondary);">Progresso geral</span>
+  <div class="progress-bar-wrap" style="flex:1;margin-bottom:0">
+    <div id="global-bar" class="progress-bar-fill pbar-purple" style="width:0%"></div>
+  </div>
+  <span id="global-label" style="font-size:13px;font-weight:500;color:var(--color-text-secondary);min-width:32px;text-align:right">0%</span>
+</div>
+
+<!-- ═══ FASE 1 ═══ -->
+<div class="phase" id="phase-1">
+  <div class="phase-header">
+    <span class="badge badge-purple">Fase 1</span>
+    <span class="phase-title">Fundação de DSP</span>
+    <span class="phase-progress" id="prog-1"></span>
+    <span class="phase-dates">20–28 mai</span>
+  </div>
+  <div class="progress-bar-wrap"><div id="bar-1" class="progress-bar-fill pbar-purple" style="width:0%"></div></div>
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-package icon-purple" aria-hidden="true"></i>1.1 — Ambiente e bibliotecas</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Instalar Python 3.10+ e criar um virtualenv para o projeto</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Instalar as libs: <span class="code-hint">pip install librosa numpy matplotlib sounddevice scipy</span></span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Confirmar que a instalação funciona: rodar <span class="code-hint">import librosa; print(librosa.__version__)</span> sem erro</span></div>
+  </div>
+  <hr class="sep">
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-file-music icon-purple" aria-hidden="true"></i>1.2 — Primeira leitura de áudio</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Baixar um arquivo <span class="code-hint">.wav</span> de nota única de guitarra (ex: freesound.org — procurar "guitar A4 single note")</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Ler o arquivo com <span class="code-hint">librosa.load()</span> e imprimir o sample rate e o tamanho do array</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Plotar a forma de onda no tempo com <span class="code-hint">matplotlib.pyplot.plot()</span> — entender o que o eixo x e y representam</span></div>
+    <p class="note">Objetivo: ver que áudio é só um array de floats. Nada mágico.</p>
+  </div>
+  <hr class="sep">
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-wave-sine icon-purple" aria-hidden="true"></i>1.3 — Sua primeira FFT</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Aplicar <span class="code-hint">numpy.fft.rfft()</span> no array de áudio e guardar o resultado</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Calcular o array de frequências correspondente com <span class="code-hint">numpy.fft.rfftfreq()</span></span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Plotar magnitude do espectro (eixo x = Hz, eixo y = intensidade) — ver os picos</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Identificar o pico mais alto no gráfico e conferir se a frequência bate com a nota (ex: A4 = 440 Hz)</span></div>
+    <p class="note">Você vai ver vários picos. O mais baixo com intensidade alta é a fundamental. Os outros são as harmônicas.</p>
+  </div>
+  <hr class="sep">
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-eye icon-purple" aria-hidden="true"></i>1.4 — Entender as harmônicas</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">No gráfico, marcar os picos e anotar as frequências deles: o segundo deve ser ~2× o primeiro, terceiro ~3×, etc.</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Escrever uma função que pega o espectro e retorna só o índice do pico mais baixo com magnitude acima de um threshold</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Testar com 3 notas diferentes (ex: A4, E4, D4) e ver se a função retorna a frequência certa</span></div>
+    <button class="ask-btn" onclick="sendPrompt('Me mostra um código completo pra ler um arquivo .wav, aplicar FFT e identificar a nota sendo tocada')">Me mostra o código completo pra isso ↗</button>
+  </div>
+  <hr class="sep">
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-music icon-purple" aria-hidden="true"></i>1.5 — Mapear frequência → nota musical</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Entender a fórmula: <span class="code-hint">nota = 69 + 12 * log2(freq / 440)</span> converte Hz em número MIDI</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Criar um dict ou usar <span class="code-hint">librosa.hz_to_midi()</span> para mapear frequência detectada → nome da nota (C4, A4…)</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Imprimir no terminal: "Nota detectada: A4 (440 Hz)" e validar com 5 notas diferentes</span></div>
+  </div>
+  <hr class="sep">
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-microphone icon-purple" aria-hidden="true"></i>1.6 — Ler do microfone em tempo real</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Usar <span class="code-hint">sounddevice.rec()</span> para gravar 1 segundo do mic e salvar como array</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Passar esse array pela mesma pipeline de FFT do passo 1.3 e ver o resultado</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Criar um loop de captura contínua em janelas de 0.5s e imprimir a nota detectada a cada janela</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Testar com sua interface de áudio: comparar precisão vs microfone embutido</span></div>
+    <p class="note">Expectativa realista: imprecisões vão aparecer. Anote o que dá errado — isso vira material para o artigo.</p>
+  </div>
+  <hr class="sep">
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-test-pipe icon-purple" aria-hidden="true"></i>1.7 — Baseline com MIDI</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Usar o teclado MIDI emprestado + <span class="code-hint">pip install mido python-rtmidi</span> para ler eventos MIDI direto</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Comparar: mesma nota tocada via MIDI (nota conhecida) vs via microfone (nota inferida pela FFT)</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Registrar a taxa de acerto em 20 tentativas e anotar — esse número vai no artigo como baseline</span></div>
+    <button class="ask-btn" onclick="sendPrompt('Como fazer um teste de precisão comparando detecção via FFT com microfone vs nota MIDI conhecida?')">Como estruturar esse teste de precisão ↗</button>
+  </div>
+
+  <div class="deliverable deliverable-purple"><i class="ti ti-check" aria-hidden="true"></i> Entregável da fase 1: função que recebe áudio (arquivo ou mic) e retorna o nome da nota detectada, com taxa de acerto medida</div>
+</div>
+
+<!-- ═══ FASE 2 ═══ -->
+<div class="phase" id="phase-2">
+  <div class="phase-header">
+    <span class="badge badge-teal">Fase 2</span>
+    <span class="phase-title">Detecção de acordes</span>
+    <span class="phase-progress" id="prog-2"></span>
+    <span class="phase-dates">29 mai–8 jun</span>
+  </div>
+  <div class="progress-bar-wrap"><div id="bar-2" class="progress-bar-fill pbar-teal" style="width:0%"></div></div>
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-book icon-teal" aria-hidden="true"></i>2.1 — Entender Chroma features</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Pesquisar o conceito: chroma representa a "energia" do áudio nas 12 notas da escala cromática, independente de oitava</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Usar <span class="code-hint">librosa.feature.chroma_stft()</span> num arquivo de acorde e plotar o resultado como heatmap</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Identificar visualmente: num acorde de C maior (C-E-G), as colunas C, E e G devem ter valores mais altos</span></div>
+  </div>
+  <hr class="sep">
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-database icon-teal" aria-hidden="true"></i>2.2 — Montar dataset pequeno</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Gravar (ou baixar) 5 acordes básicos em 4 variações cada: Am, Em, C, G, D — total ~20 amostras</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Salvar cada arquivo nomeado como <span class="code-hint">Am_01.wav</span>, <span class="code-hint">C_02.wav</span> etc. — o nome é o label</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Extrair chroma de cada arquivo e salvar num array numpy com seu respectivo label</span></div>
+  </div>
+  <hr class="sep">
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-template icon-teal" aria-hidden="true"></i>2.3 — Template matching</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Criar templates de chroma para cada acorde (ex: C maior = [1,0,0,0,1,0,0,1,0,0,0,0])</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Implementar classificação por correlação: comparar chroma do áudio com cada template via <span class="code-hint">numpy.correlate()</span></span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Retornar o acorde com maior correlação como resultado — testar com o dataset</span></div>
+    <button class="ask-btn" onclick="sendPrompt('Me mostra como implementar template matching de acordes usando chroma features com numpy')">Me mostra o código de template matching ↗</button>
+  </div>
+  <hr class="sep">
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-chart-bar icon-teal" aria-hidden="true"></i>2.4 — Avaliar e documentar</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Rodar classificação em todo o dataset e calcular acurácia por acorde</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Criar uma matriz de confusão simples (qual acorde é confundido com qual)</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Escrever a seção de "metodologia" do artigo com base nesses resultados</span></div>
+  </div>
+  <hr class="sep">
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-player-play icon-teal" aria-hidden="true"></i>2.5 — Pipeline em tempo real</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Integrar: captura de mic → chroma → template matching → imprimir acorde detectado, tudo em loop</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Medir latência total do loop (quanto ms entre tocar e imprimir)</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Ajustar tamanho da janela de captura para equilibrar velocidade e precisão</span></div>
+  </div>
+
+  <div class="deliverable deliverable-teal"><i class="ti ti-check" aria-hidden="true"></i> Entregável da fase 2: pipeline que detecta acordes em tempo real e imprime no terminal, com acurácia medida no dataset</div>
+</div>
+
+<!-- ═══ FASE 3 ═══ -->
+<div class="phase" id="phase-3">
+  <div class="phase-header">
+    <span class="badge badge-amber">Fase 3</span>
+    <span class="phase-title">Integração com o jogo</span>
+    <span class="phase-progress" id="prog-3"></span>
+    <span class="phase-dates">9–17 jun</span>
+  </div>
+  <div class="progress-bar-wrap"><div id="bar-3" class="progress-bar-fill pbar-amber" style="width:0%"></div></div>
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-plug icon-amber" aria-hidden="true"></i>3.1 — Conectar detector ao jogo</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Criar uma thread separada para a captura de áudio (não bloquear o loop do jogo)</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Usar uma variável global ou queue para comunicar o acorde detectado ao loop principal do jogo</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Substituir o input de teclado por "acorde detectado = acorde esperado" como condição de acerto</span></div>
+    <button class="ask-btn" onclick="sendPrompt('Como usar threading em Python para capturar áudio em paralelo com o loop principal de um jogo pygame?')">Como usar threading com pygame ↗</button>
+  </div>
+  <hr class="sep">
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-clock icon-amber" aria-hidden="true"></i>3.2 — Resolver latência</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Medir o delay end-to-end: gravar timestamp ao tocar e ao detectar, calcular diferença</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Se latência > 150ms: reduzir janela de captura (ex: 0.5s → 0.25s) e avaliar tradeoff de precisão</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Documentar latência final — mesmo que alta, é um resultado válido para o artigo</span></div>
+  </div>
+  <hr class="sep">
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-adjustments icon-amber" aria-hidden="true"></i>3.3 — Tolerância e UX</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Implementar janela de tolerância temporal: acorde certo em ±X ms do tempo esperado conta como acerto</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Adicionar feedback visual quando acorde é detectado (mesmo que errado) para o jogador saber que o mic está funcionando</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Testar jogabilidade com uma música simples de 4 acordes</span></div>
+  </div>
+  <hr class="sep">
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-device-gamepad icon-amber" aria-hidden="true"></i>3.4 — Teste de jogabilidade</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Jogar uma sessão completa de 3–5 minutos e anotar impressões: o que quebra a imersão?</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Pedir para outra pessoa testar sem explicar como funciona — observar onde ela trava</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Listar os top 3 problemas encontrados e decidir quais são corrigíveis até 22/06</span></div>
+  </div>
+
+  <div class="deliverable deliverable-amber"><i class="ti ti-check" aria-hidden="true"></i> Entregável da fase 3: protótipo jogável, demonstrável em vídeo ou ao vivo para a banca</div>
+</div>
+
+<!-- ═══ FASE 4 ═══ -->
+<div class="phase" id="phase-4">
+  <div class="phase-header">
+    <span class="badge badge-coral">Fase 4</span>
+    <span class="phase-title">Artigo e polish</span>
+    <span class="phase-progress" id="prog-4"></span>
+    <span class="phase-dates">18–22 jun</span>
+  </div>
+  <div class="progress-bar-wrap"><div id="bar-4" class="progress-bar-fill pbar-coral" style="width:0%"></div></div>
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-pencil icon-coral" aria-hidden="true"></i>4.1 — Completar o artigo</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Escrever seção de introdução: motivação, Guitar Hero/Rocksmith como contexto, objetivo do trabalho</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Escrever revisão bibliográfica: FFT, HPS, Chroma features, trabalhos relacionados (ex: papers do ISMIR)</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Escrever metodologia: pipeline completa do sistema com diagrama de blocos</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Escrever resultados: tabelas de acurácia, gráficos de espectro, latência medida</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Escrever conclusão: o que funcionou, o que não funcionou, trabalhos futuros</span></div>
+    <button class="ask-btn" onclick="sendPrompt('Me ajuda a escrever a estrutura completa do artigo acadêmico sobre detecção de acordes em tempo real')">Me ajuda a estruturar o artigo ↗</button>
+  </div>
+  <hr class="sep">
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-chart-line icon-coral" aria-hidden="true"></i>4.2 — Gerar figuras para o artigo</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Exportar gráfico do espectro FFT com picos anotados (frequência fundamental + harmônicas marcadas)</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Criar diagrama de blocos da pipeline: mic → FFT → chroma → classifier → jogo</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Exportar matriz de confusão dos acordes como figura</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Capturar screenshots do protótipo funcionando</span></div>
+  </div>
+  <hr class="sep">
+
+  <div class="task-group">
+    <div class="task-group-title"><i class="ti ti-bug icon-coral" aria-hidden="true"></i>4.3 — Bug fixes e entrega</div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Resolver os top 3 problemas identificados no teste de jogabilidade (fase 3.4)</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Garantir que o protótipo roda em outra máquina além da sua (testar dependências)</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Revisar artigo completo — pedir para alguém de fora ler e apontar o que não ficou claro</span></div>
+    <div class="subtask" onclick="toggle(this)"><input type="checkbox"><span class="subtask-text">Entregar ambos até 22 de junho</span></div>
+  </div>
+
+  <div class="deliverable deliverable-coral"><i class="ti ti-check" aria-hidden="true"></i> Entregável final: artigo + código + protótipo entregues em 22/06</div>
+</div>
+
+<script>
+const STORAGE_KEY = 'roadmap_guitar_hero_v1';
+const bars = { 1:'bar-1', 2:'bar-2', 3:'bar-3', 4:'bar-4' };
+const barColors = { 1:'pbar-purple', 2:'pbar-teal', 3:'pbar-amber', 4:'pbar-coral' };
+
+function getPhaseOfCheckbox(cb) {
+  return cb.closest('.phase').id.replace('phase-','');
+}
+
+function toggle(row) {
+  const cb = row.querySelector('input[type=checkbox]');
+  cb.checked = !cb.checked;
+  const span = row.querySelector('.subtask-text');
+  span.classList.toggle('done', cb.checked);
+  saveState();
+  updateBars();
+}
+
+function updateBars() {
+  let totalAll = 0, doneAll = 0;
+  [1,2,3,4].forEach(p => {
+    const phase = document.getElementById('phase-'+p);
+    const all = phase.querySelectorAll('input[type=checkbox]');
+    const done = phase.querySelectorAll('input[type=checkbox]:checked');
+    const pct = all.length ? Math.round(done.length / all.length * 100) : 0;
+    document.getElementById(bars[p]).style.width = pct + '%';
+    const prog = document.getElementById('prog-'+p);
+    if(prog) prog.textContent = done.length + '/' + all.length;
+    totalAll += all.length; doneAll += done.length;
+  });
+  const globalPct = totalAll ? Math.round(doneAll / totalAll * 100) : 0;
+  document.getElementById('global-bar').style.width = globalPct + '%';
+  document.getElementById('global-label').textContent = globalPct + '%';
+}
+
+function saveState() {
+  const state = {};
+  document.querySelectorAll('input[type=checkbox]').forEach((cb, i) => { state[i] = cb.checked; });
+  try { window.storage && window.storage.set(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+async function loadState() {
+  let state = null;
+  try {
+    const r = await window.storage.get(STORAGE_KEY);
+    if(r) state = JSON.parse(r.value);
+  } catch(e) {}
+  if(!state) {
+    try { const s = localStorage.getItem(STORAGE_KEY); if(s) state = JSON.parse(s); } catch(e) {}
+  }
+  if(state) {
+    document.querySelectorAll('input[type=checkbox]').forEach((cb, i) => {
+      if(state[i]) {
+        cb.checked = true;
+        cb.closest('.subtask').querySelector('.subtask-text').classList.add('done');
+      }
+    });
+  }
+  updateBars();
+}
+
+loadState();
+</script>
