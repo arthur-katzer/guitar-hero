@@ -3,3 +3,5 @@ scipy
 sounddevice
 mido
 matplotlib
+librosa
+imageio-ffmpeg

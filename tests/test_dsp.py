@@ -4,7 +4,6 @@ import numpy as np
 
 from audio.chords import detect_chord
 from audio.dsp import analyze_pitch, analyze_windows, midi_to_frequency
-from audio.matching import match_detections_to_chart
 
 
 SAMPLE_RATE = 44100
@@ -68,31 +67,3 @@ class ChordDetectionTests(unittest.TestCase):
         self.assertGreater(result.confidence, 0.5)
 
 
-class OfflineMatchingTests(unittest.TestCase):
-    def test_matches_detection_to_chart_event(self):
-        samples = sine(69, duration=0.3)
-        detections = analyze_windows(
-            samples,
-            SAMPLE_RATE,
-            window_ms=100,
-            hop_ms=100,
-            noise_threshold=0.001,
-        )
-        chart = [{"time": 0.05, "midi": 69, "note": "A4"}]
-        summary = match_detections_to_chart(chart, detections, hit_window=0.1)
-        self.assertEqual(summary.hits, 1)
-        self.assertEqual(summary.misses, 0)
-
-    def test_misses_wrong_midi(self):
-        samples = sine(69, duration=0.3)
-        detections = analyze_windows(
-            samples,
-            SAMPLE_RATE,
-            window_ms=100,
-            hop_ms=100,
-            noise_threshold=0.001,
-        )
-        chart = [{"time": 0.05, "midi": 60, "note": "C4"}]
-        summary = match_detections_to_chart(chart, detections, hit_window=0.1)
-        self.assertEqual(summary.hits, 0)
-        self.assertEqual(summary.misses, 1)

@@ -76,3 +76,128 @@ Cada checkpoint exige uma explicação humana em linguagem simples. O padrão do
 Para o futuro, a principal evolução do projeto será a integração com instrumentos reais. Utilizando a base já construída e os protótipos da pasta `experiments/`, o jogo vai escutar o áudio capturado por um microfone e identificar os acordes que estão sendo tocados por um violão ou guitarra real do outro lado. 
 
 A ideia é manter o formato atual como um **"keyboard mode"** (modo teclado) e introduzir um novo **"instrument mode"** (modo instrumento) muito mais imersivo. Isso exigirá a expansão das mecânicas atuais para mapear e processar fielmente a complexidade dos acordes tocados por instrumentos físicos.
+
+## 7. Chroma MVP: audio performance vs MIDI reference
+
+This MVP compares a normal audio file, such as an MP3 recorded from guitar,
+against a reference MIDI file. It does not try to solve perfect guitar
+transcription. Instead, both inputs are converted into chroma features: 12
+pitch-class bins (`C`, `C#`, `D`, ... `B`) over time. This is better for rough
+chord/harmony matching than raw FFT peak frequency.
+
+Install dependencies:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+If MP3 loading fails, install `ffmpeg` and make sure it is available on `PATH`.
+Tracktion Waveform can be used to record/export audio, but the analysis scripts
+only need normal audio files and MIDI files.
+
+Offline comparison:
+
+```bash
+python compare_audio_to_midi.py --audio samples/song.mp3 --midi songs/mid/reference.mid --out artifacts/report.csv
+```
+
+Convert MP3 to WAV first when you want a stable local smoke artifact:
+
+```bash
+python mp3_to_wav.py "samples/505 - Arctic Monkeys ｜ Fingerstyle Guitar ｜ TAB + Chords + Lyrics.mp3" artifacts/505.wav --overwrite
+python compare_audio_to_midi.py --audio artifacts/505.wav --midi songs/mid/arctic_monkeys-505.mid --out artifacts/505_chroma_report.csv
+```
+
+Use DTW when the audio and MIDI are musically similar but not perfectly aligned:
+
+```bash
+python compare_audio_to_midi.py --audio samples/song.mp3 --midi songs/mid/reference.mid --out artifacts/report.csv --alignment dtw
+```
+
+Outputs:
+
+- CSV report with `time_audio_sec`, `time_midi_sec`, `similarity`, `status`,
+  `audio_pitch_classes`, and `midi_pitch_classes`.
+- PNG similarity plot next to the CSV, unless `--no-plot` is passed.
+- Terminal summary with mean cosine similarity and timeline regions such as
+  likely match, weak match, and mismatch.
+
+Useful options:
+
+```bash
+python compare_audio_to_midi.py --help
+python compare_audio_to_midi.py --audio samples/song.mp3 --midi songs/mid/reference.mid --alignment fixed
+python compare_audio_to_midi.py --audio samples/song.mp3 --midi songs/mid/reference.mid --alignment dtw --dtw-max-cells 20000000
+```
+
+Live microphone/audio-interface chroma test:
+
+```bash
+python live_chroma_test.py
+```
+
+The script asks for target pitch classes. For example, `0,4,7` means C major
+pitch classes. You can also type note names like `C,E,G`.
+
+Helpful live-test commands:
+
+```bash
+python live_chroma_test.py --list-devices
+python live_chroma_test.py --target 0,4,7 --device 1
+python live_chroma_test.py --target C,E,G --once
+```
+
+Live single-note trainer:
+
+```bash
+python live_note_trainer.py --list-devices
+python live_note_trainer.py --first-note A4 --notes C4,D4,E4,F4,G4,A4,B4,C5
+```
+
+For a first smoke test with the `A4.mp3` file playing from your phone speaker,
+limit the pool to A4:
+
+```bash
+python live_note_trainer.py --notes A4 --hold-seconds 0.6
+```
+
+The trainer gives one point after the target note is detected continuously for
+the configured hold time. With multiple notes, it uses shuffled rounds so the
+same target is not requested twice in a row.
+
+If the trainer keeps showing `Silence`, scan the input devices while playing
+`A4.mp3` from your phone:
+
+```bash
+python mic_device_scan.py --devices 1,2,7,8,14,15 --seconds 2
+```
+
+Then use the device with the highest `rms`/`peak`:
+
+```bash
+python live_note_trainer.py --device 14 --notes A4 --threshold 0.001 --hold-seconds 0.6
+```
+
+To test audio played by the computer itself, such as YouTube, use Windows
+Stereo Mix / `Mixagem estéreo`:
+
+```bash
+python mic_device_scan.py --system-audio --seconds 2
+python live_note_trainer.py --system-audio --notes A4 --threshold 0.001 --hold-seconds 0.6
+```
+
+If auto-detection fails but `--list-devices` shows `Mixagem estéreo`, pass it
+directly. In the current scan it appeared as device `19`:
+
+```bash
+python mic_device_scan.py --devices 19 --seconds 2
+python live_note_trainer.py --device 19 --notes A4 --threshold 0.001 --hold-seconds 0.6
+```
+
+Definition of done for this prototype:
+
+- An MP3 and MIDI of the same short passage should score higher than an
+  unrelated MIDI.
+- The offline script produces a CSV and timeline of match/weak/mismatch regions.
+- The live script can roughly detect whether a captured note/chord matches a
+  target pitch-class set.
