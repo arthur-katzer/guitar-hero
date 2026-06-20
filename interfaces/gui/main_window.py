@@ -17,9 +17,12 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QSizePolicy,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
+
+from interfaces.sandbox.view import SandboxView
 
 
 MAIN_MENU_OPTIONS = ("Play", "Learn", "Sandbox")
@@ -493,11 +496,17 @@ class MainWindow(QMainWindow):
         self.resize(960, 640)
         self.background = SpectrumBackground()
         self.menu = MainMenu()
+        self.sandbox = SandboxView()
+        self.screens = QStackedWidget()
         self.background_layout = QVBoxLayout(self.background)
         self.background_layout.setContentsMargins(0, 0, 0, 0)
         self.background_layout.addWidget(self.menu)
-        self.setCentralWidget(self.background)
+        self.screens.addWidget(self.background)
+        self.screens.addWidget(self.sandbox)
+        self.setCentralWidget(self.screens)
         self.menu.option_highlighted.connect(self.background.set_active_option)
+        self.menu.option_selected.connect(self._open_option)
+        self.sandbox.back_requested.connect(self._show_menu)
         self.background.set_active_option(MAIN_MENU_OPTIONS[self.menu.current_index()])
         self.setStyleSheet(
             """
@@ -541,3 +550,23 @@ class MainWindow(QMainWindow):
             }
             """
         )
+
+    def _open_option(self, option: str) -> None:
+        """Open the selected top-level screen when the use case exists.
+
+        Sandbox is the first operational destination. Play and Learn remain
+        navigation labels until their use cases are defined.
+
+        @author Codex - wired operational sandbox screen into the main menu.
+        """
+
+        if option == "Sandbox":
+            self.screens.setCurrentWidget(self.sandbox)
+
+    def _show_menu(self) -> None:
+        """Return from an operational screen to the main menu.
+
+        @author Codex - wired operational sandbox screen into the main menu.
+        """
+
+        self.screens.setCurrentWidget(self.background)

@@ -14,6 +14,7 @@ from collections import deque
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import queue
 import sys
 import time
 
@@ -98,7 +99,16 @@ def list_input_devices() -> None:
 
 
 def find_input_device(name_fragment: str = DEVICE_NAME_FRAGMENT) -> tuple[int, dict]:
-    """Return the first input device whose name contains the requested text."""
+    """Return the best input device whose name contains the requested text.
+
+    Name matching is intentionally ranked because Linux audio stacks can expose
+    the same USB interface both as an ALSA hardware device and as a Pulse/PipeWire
+    virtual source. The direct ``USB Audio CODEC`` hardware endpoint has been
+    more stable for the old blocking-stream diagnostic path than the virtual
+    ``PCM2902 Audio Codec Analog Stereo`` source.
+
+    @author Codex - ranked CODEC matching to avoid unstable virtual source.
+    """
     require_sounddevice()
     matches: list[tuple[int, dict]] = []
     for index, device in enumerate(sd.query_devices()):
@@ -116,7 +126,27 @@ def find_input_device(name_fragment: str = DEVICE_NAME_FRAGMENT) -> tuple[int, d
         )
         raise SystemExit(1)
 
-    return matches[0]
+    def rank(match: tuple[int, dict]) -> tuple[int, int]:
+        _index, device = match
+        name = str(device["name"]).casefold()
+        if name.startswith("usb audio codec"):
+            return (0, 0)
+        if "hw:" in name:
+            return (1, 0)
+        return (2, 0)
+
+    return sorted(matches, key=rank)[0]
+
+
+def choose_input_device(device_fragment: str, device_index: int | None) -> tuple[int, dict]:
+    """Choose an input device by explicit index or ranked name lookup.
+
+    @author Codex - allowed live APD modes to target a stable device index.
+    """
+
+    if device_index is not None:
+        return input_device_by_index(device_index)
+    return find_input_device(device_fragment)
 
 
 def default_input_device_index() -> int | None:
@@ -178,10 +208,15 @@ def choose_sample_rate(device_index: int | None, requested_rate: int = DEFAULT_S
         return fallback
 
 
-def record_audio(seconds: float, output_path: Path, device_fragment: str) -> tuple[np.ndarray, int]:
+def record_audio(
+    seconds: float,
+    output_path: Path,
+    device_fragment: str,
+    device_index: int | None = None,
+) -> tuple[np.ndarray, int]:
     """Record mono float audio and save it as a WAV file."""
     require_sounddevice()
-    device_index, device = find_input_device(device_fragment)
+    device_index, device = choose_input_device(device_fragment, device_index)
     sample_rate = choose_sample_rate(device_index)
     frames = int(seconds * sample_rate)
 
@@ -621,6 +656,7 @@ def print_mic_test_block(samples: np.ndarray, sample_rate: int, rms_threshold: f
 
 def realtime(
     device_fragment: str,
+    device_index: int | None,
     rms_threshold: float,
     buffer_ms: float,
     smooth_count: int,
@@ -630,7 +666,7 @@ def realtime(
 ) -> None:
     """Continuously print smoothed frequency and note estimates from the input."""
     require_sounddevice()
-    device_index, device = find_input_device(device_fragment)
+    device_index, device = choose_input_device(device_fragment, device_index)
     sample_rate = choose_sample_rate(device_index)
     blocksize = int(sample_rate * buffer_ms / 1000.0)
     recent_notes: deque[int] = deque(maxlen=max(1, smooth_count))
@@ -641,80 +677,79 @@ def realtime(
     print(f"Listening on [{device_index}] {device['name']} at {sample_rate} Hz. Press Ctrl+C to stop.")
     started_at = time.monotonic()
     try:
-        with sd.InputStream(
-            device=device_index,
-            channels=DEFAULT_CHANNELS,
-            samplerate=sample_rate,
-            blocksize=blocksize,
-            dtype="float32",
-        ) as stream:
-            while True:
-                if max_seconds is not None and time.monotonic() - started_at >= max_seconds:
-                    print("Stopped after realtime smoke-test duration.")
-                    return
+        while True:
+            if max_seconds is not None and time.monotonic() - started_at >= max_seconds:
+                print("Stopped after realtime smoke-test duration.")
+                return
 
-                block, overflowed = stream.read(blocksize)
-                if overflowed:
-                    print("warning: audio input overflow")
+            capture = sd.rec(
+                blocksize,
+                samplerate=sample_rate,
+                channels=DEFAULT_CHANNELS,
+                dtype="float32",
+                device=device_index,
+            )
+            sd.wait()
+            block = np.asarray(capture, dtype=np.float32).reshape(-1)
 
-                peaks, rms = find_fft_peaks(
-                    block[:, 0],
-                    sample_rate,
-                    count=8,
-                    min_hz=MIN_GUITAR_HZ,
-                    max_hz=MAX_GUITAR_HZ,
-                )
-                if rms < rms_threshold or not peaks:
-                    recent_notes.clear()
-                    recent_freqs.clear()
-                    text = f"quiet / no pitch | RMS={rms:.5f}"
-                    now = time.monotonic()
-                    status = "quiet"
-                    if now - last_printed_at >= print_interval or status != last_printed_status:
-                        print(text)
-                        last_printed_at = now
-                        last_printed_status = status
-                    time.sleep(0.02)
-                    continue
-
-                dominant = peaks[0]
-                estimate = estimate_pitch_from_peaks(peaks, pitch_mode)
-                recent_notes.append(estimate.peak.midi)
-                recent_freqs.append(estimate.peak.frequency_hz)
-
-                # Median smoothing keeps one strange buffer from flipping the display.
-                smooth_midi = int(round(float(np.median(recent_notes))))
-                smooth_freq = float(np.median(recent_freqs))
-                _smooth_midi, smooth_note = frequency_to_note(smooth_freq)
-                if pitch_mode == PITCH_MODE_DOMINANT:
-                    text = "\n".join(
-                        [
-                            "Pitch mode: dominant",
-                            f"Detected pitch: {smooth_freq:8.2f} Hz | {smooth_note:4s} | MIDI {smooth_midi:3d} | RMS={rms:.5f}",
-                            f"Reason: {estimate.reason}",
-                        ]
-                    )
-                else:
-                    text = "\n".join(
-                        [
-                            "Pitch mode: fundamental",
-                            f"Dominant peak:  {dominant.frequency_hz:8.2f} Hz | {dominant.note:4s} | MIDI {dominant.midi:3d} | RMS={rms:.5f}",
-                            f"Detected pitch: {smooth_freq:8.2f} Hz | {smooth_note:4s} | MIDI {smooth_midi:3d}",
-                            f"Reason: {estimate.reason}",
-                        ]
-                    )
+            peaks, rms = find_fft_peaks(
+                block,
+                sample_rate,
+                count=8,
+                min_hz=MIN_GUITAR_HZ,
+                max_hz=MAX_GUITAR_HZ,
+            )
+            if rms < rms_threshold or not peaks:
+                recent_notes.clear()
+                recent_freqs.clear()
+                text = f"quiet / no pitch | RMS={rms:.5f}"
                 now = time.monotonic()
-                status = f"{pitch_mode}:{dominant.note}->{smooth_note}:{estimate.harmonic_multiples}"
+                status = "quiet"
                 if now - last_printed_at >= print_interval or status != last_printed_status:
                     print(text)
                     last_printed_at = now
                     last_printed_status = status
+                continue
+
+            dominant = peaks[0]
+            estimate = estimate_pitch_from_peaks(peaks, pitch_mode)
+            recent_notes.append(estimate.peak.midi)
+            recent_freqs.append(estimate.peak.frequency_hz)
+
+            # Median smoothing keeps one strange buffer from flipping the display.
+            smooth_midi = int(round(float(np.median(recent_notes))))
+            smooth_freq = float(np.median(recent_freqs))
+            _smooth_midi, smooth_note = frequency_to_note(smooth_freq)
+            if pitch_mode == PITCH_MODE_DOMINANT:
+                text = "\n".join(
+                    [
+                        "Pitch mode: dominant",
+                        f"Detected pitch: {smooth_freq:8.2f} Hz | {smooth_note:4s} | MIDI {smooth_midi:3d} | RMS={rms:.5f}",
+                        f"Reason: {estimate.reason}",
+                    ]
+                )
+            else:
+                text = "\n".join(
+                    [
+                        "Pitch mode: fundamental",
+                        f"Dominant peak:  {dominant.frequency_hz:8.2f} Hz | {dominant.note:4s} | MIDI {dominant.midi:3d} | RMS={rms:.5f}",
+                        f"Detected pitch: {smooth_freq:8.2f} Hz | {smooth_note:4s} | MIDI {smooth_midi:3d}",
+                        f"Reason: {estimate.reason}",
+                    ]
+                )
+            now = time.monotonic()
+            status = f"{pitch_mode}:{dominant.note}->{smooth_note}:{estimate.harmonic_multiples}"
+            if now - last_printed_at >= print_interval or status != last_printed_status:
+                print(text)
+                last_printed_at = now
+                last_printed_status = status
     except KeyboardInterrupt:
         print("\nStopped.")
 
 
 def diagnose(
     device_fragment: str,
+    device_index: int | None,
     rms_threshold: float,
     buffer_ms: float,
     max_seconds: float | None = None,
@@ -722,7 +757,7 @@ def diagnose(
 ) -> None:
     """Continuously print FFT peaks so harmonic problems are visible."""
     require_sounddevice()
-    device_index, device = find_input_device(device_fragment)
+    device_index, device = choose_input_device(device_fragment, device_index)
     sample_rate = choose_sample_rate(device_index)
 
     # Longer windows make low guitar notes much easier to diagnose.
@@ -735,6 +770,17 @@ def diagnose(
     )
     started_at = time.monotonic()
     last_printed_at = 0.0
+    blocks: queue.Queue[np.ndarray] = queue.Queue(maxsize=4)
+
+    def on_audio(indata, _frames, _time_info, status) -> None:
+        if status:
+            print(f"warning: {status}")
+        block = np.asarray(indata, dtype=np.float32).reshape(-1).copy()
+        try:
+            blocks.put_nowait(block)
+        except queue.Full:
+            _oldest = blocks.get_nowait()
+            blocks.put_nowait(block)
 
     try:
         with sd.InputStream(
@@ -743,22 +789,24 @@ def diagnose(
             samplerate=sample_rate,
             blocksize=blocksize,
             dtype="float32",
-        ) as stream:
+            callback=on_audio,
+        ):
             while True:
                 if max_seconds is not None and time.monotonic() - started_at >= max_seconds:
                     print("Stopped after diagnostic smoke-test duration.")
                     return
 
-                block, overflowed = stream.read(blocksize)
-                if overflowed:
-                    print("warning: audio input overflow")
+                try:
+                    block = blocks.get(timeout=0.1)
+                except queue.Empty:
+                    continue
 
                 now = time.monotonic()
                 if now - last_printed_at < print_interval:
                     continue
 
                 print()
-                print_diagnosis_block(block[:, 0], sample_rate, rms_threshold)
+                print_diagnosis_block(block, sample_rate, rms_threshold)
                 last_printed_at = now
     except KeyboardInterrupt:
         print("\nStopped.")
@@ -766,6 +814,7 @@ def diagnose(
 
 def compare_modes(
     device_fragment: str,
+    device_index: int | None,
     rms_threshold: float,
     buffer_ms: float,
     max_seconds: float | None = None,
@@ -773,7 +822,7 @@ def compare_modes(
 ) -> None:
     """Continuously compare naive dominant peak and harmonic-aware pitch."""
     require_sounddevice()
-    device_index, device = find_input_device(device_fragment)
+    device_index, device = choose_input_device(device_fragment, device_index)
     sample_rate = choose_sample_rate(device_index)
 
     comparison_buffer_ms = max(buffer_ms, 250.0)
@@ -901,7 +950,7 @@ def parse_args() -> argparse.Namespace:
         help="Pitch detector mode for --record and --realtime",
     )
     parser.add_argument("--device-name", default=DEVICE_NAME_FRAGMENT, help="Input device name fragment to search for")
-    parser.add_argument("--device-index", type=int, help="Input device index for --mic-test")
+    parser.add_argument("--device-index", type=int, help="Input device index for recording/live modes")
     parser.add_argument("--output", default="var/artifacts/recording.wav", help="Output WAV path for --record")
     parser.add_argument("--rms-threshold", type=float, default=0.01, help="Ignore audio quieter than this RMS")
     parser.add_argument("--buffer-ms", type=float, default=80.0, help="Realtime/diagnostic buffer length in milliseconds")
@@ -928,13 +977,14 @@ def main() -> int:
         return 0
 
     if args.record is not None:
-        samples, sample_rate = record_audio(args.record, Path(args.output), args.device_name)
+        samples, sample_rate = record_audio(args.record, Path(args.output), args.device_name, args.device_index)
         analyze_and_print(samples, sample_rate, args.rms_threshold, args.pitch_mode)
         return 0
 
     if args.realtime:
         realtime(
             args.device_name,
+            args.device_index,
             args.rms_threshold,
             args.buffer_ms,
             args.smooth_count,
@@ -947,6 +997,7 @@ def main() -> int:
     if args.diagnose:
         diagnose(
             args.device_name,
+            args.device_index,
             args.rms_threshold,
             args.buffer_ms,
             args.max_seconds,
@@ -957,6 +1008,7 @@ def main() -> int:
     if args.compare:
         compare_modes(
             args.device_name,
+            args.device_index,
             args.rms_threshold,
             args.buffer_ms,
             args.max_seconds,
