@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QGraphicsDropShadowEffect,
     QMainWindow,
     QPushButton,
     QSizePolicy,
@@ -14,6 +16,56 @@ from PySide6.QtWidgets import (
 
 
 MAIN_MENU_OPTIONS = ("Play", "Training", "Library", "Style")
+MENU_OPTION_COLORS = {
+    "Play": "#2ee66b",
+    "Training": "#ff4d4d",
+    "Library": "#ffd43b",
+    "Style": "#339af0",
+}
+
+
+class MainMenuButton(QPushButton):
+    """Menu option with plain idle text and lane-colored active glow.
+
+    The visual rule deliberately lives in this adapter widget instead of in the
+    menu use case: Qt stylesheets cannot express a real text glow, so the GUI
+    detail uses ``QGraphicsDropShadowEffect`` while the menu still exposes only
+    stable option labels.
+
+    @author Codex - added lane-colored glow highlight to main menu options.
+    """
+
+    def __init__(self, label: str, active_color: str, parent: QWidget | None = None):
+        super().__init__(label, parent)
+        self._active_color = QColor(active_color)
+        self._glow = QGraphicsDropShadowEffect(self)
+        self._glow.setBlurRadius(34)
+        self._glow.setOffset(0, 0)
+        self._glow.setColor(self._with_alpha(self._active_color, 230))
+        self.setGraphicsEffect(self._glow)
+        self.toggled.connect(lambda checked: self.sync_highlight())
+        self.sync_highlight()
+
+    def sync_highlight(self) -> None:
+        """Apply active text color and glow from checked, hover, or focus state.
+
+        @author Codex - added lane-colored glow highlight to main menu options.
+        """
+
+        active = self.isChecked() or self.underMouse() or self.hasFocus()
+        text_color = self._active_color.name() if active else "#ffffff"
+        self.setStyleSheet(f"color: {text_color};")
+        self._glow.setEnabled(active)
+
+    def _with_alpha(self, color: QColor, alpha: int) -> QColor:
+        """Return a copy of ``color`` with the requested alpha channel.
+
+        @author Codex - added lane-colored glow highlight to main menu options.
+        """
+
+        copy = QColor(color)
+        copy.setAlpha(alpha)
+        return copy
 
 
 class MainMenu(QWidget):
@@ -43,7 +95,7 @@ class MainMenu(QWidget):
         menu_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
 
         for index, label in enumerate(MAIN_MENU_OPTIONS):
-            button = QPushButton(label)
+            button = MainMenuButton(label, MENU_OPTION_COLORS[label])
             button.setCheckable(True)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -89,9 +141,15 @@ class MainMenu(QWidget):
             event_type = event.type()
             if event_type in {
                 QEvent.Type.Enter,
+                QEvent.Type.Leave,
                 QEvent.Type.FocusIn,
+                QEvent.Type.FocusOut,
             }:
-                self.set_current_index(self._buttons.index(watched))
+                button = watched
+                if event_type in {QEvent.Type.Enter, QEvent.Type.FocusIn}:
+                    self.set_current_index(self._buttons.index(button))
+                if isinstance(button, MainMenuButton):
+                    button.sync_highlight()
         return super().eventFilter(watched, event)
 
     def keyPressEvent(self, event: object) -> None:
@@ -160,9 +218,9 @@ class MainWindow(QMainWindow):
 
             QPushButton {
                 background: transparent;
-                border: 1px solid transparent;
+                border: 0;
                 border-radius: 6px;
-                color: rgba(245, 245, 245, 0.54);
+                color: #ffffff;
                 font-size: 24px;
                 font-weight: 650;
                 letter-spacing: 0;
@@ -173,13 +231,12 @@ class MainWindow(QMainWindow):
             QPushButton:hover,
             QPushButton:focus,
             QPushButton:checked {
-                background: rgba(255, 255, 255, 0.10);
-                border-color: rgba(255, 255, 255, 0.22);
-                color: #ffffff;
+                background: transparent;
+                border: 0;
             }
 
             QPushButton:pressed {
-                background: rgba(255, 255, 255, 0.16);
+                background: transparent;
             }
             """
         )
