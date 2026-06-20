@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QColor
+import math
+import random
+import shutil
+import subprocess
+from pathlib import Path
+
+import numpy as np
+from PySide6.QtCore import QEvent, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QLinearGradient, QPainter
 from PySide6.QtWidgets import (
     QButtonGroup,
     QGraphicsDropShadowEffect,
@@ -22,6 +29,186 @@ MENU_OPTION_COLORS = {
     "Library": "#ffd43b",
     "Style": "#339af0",
 }
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+VISUALIZER_MP3_PATH = PROJECT_ROOT / "assets" / "visualizer" / "on-my-knees.mp3"
+MUSIC_LIBRARY_PATH = Path.home() / "Music"
+VISUALIZER_AUDIO_EXTENSIONS = {".aac", ".flac", ".m4a", ".mp3", ".ogg", ".wav"}
+
+
+def choose_visualizer_audio_path(
+    music_library_path: Path = MUSIC_LIBRARY_PATH,
+    fallback_path: Path = VISUALIZER_MP3_PATH,
+) -> Path:
+    """Choose a random local song for the decorative menu visualizer.
+
+    Random selection is an interface detail, not a game rule: the menu only
+    needs varied spectrum input while the future song library/play use cases
+    remain free to define their own catalog and selection policy. The bundled
+    fallback keeps the GUI deterministic enough to boot when a user has no
+    readable music library.
+
+    @author Codex - added random local music selection for the menu visualizer.
+    """
+
+    candidates = [
+        path
+        for path in music_library_path.rglob("*")
+        if path.is_file()
+        and path.suffix.lower() in VISUALIZER_AUDIO_EXTENSIONS
+        and not any(part.startswith(".") for part in path.relative_to(music_library_path).parts)
+    ] if music_library_path.exists() else []
+    if not candidates:
+        return fallback_path
+    return random.choice(candidates)
+
+
+class VisualizerTrack:
+    """Visual-only music data source for the menu spectrum.
+
+    The menu background uses the selected MP3 as its only song-derived texture.
+    It intentionally avoids live playback here: audio output belongs to the
+    future play use case, while this adapter owns only decorative rendering.
+
+    @author Codex - connected menu spectrum animation to pulled MIDI/MP3 assets.
+    @author Codex - switched the menu visualizer to the On My Knees MP3 asset.
+    @author Codex - converted visualizer data from volume wave to spectrum frames.
+    """
+
+    def __init__(self, mp3_path: Path, bucket_count: int = 768):
+        self._sample_rate = 8_000
+        self.duration_seconds = 30.0
+        self._spectrum_frames = [[0.35 for _ in range(96)]]
+        self._load_mp3_spectrum(mp3_path)
+
+    def energy_at(self, seconds: float, bar_index: int, bar_count: int) -> float:
+        """Return a normalized visual energy value for a bar at playhead time.
+
+        @author Codex - connected menu spectrum animation to pulled MIDI/MP3 assets.
+        @author Codex - switched the menu visualizer to the On My Knees MP3 asset.
+        @author Codex - converted visualizer data from volume wave to spectrum frames.
+        """
+
+        if not self._spectrum_frames:
+            return 0.45
+        frame_position = (seconds % self.duration_seconds) / self.duration_seconds
+        exact_frame = frame_position * len(self._spectrum_frames)
+        frame_index = int(exact_frame) % len(self._spectrum_frames)
+        next_frame_index = (frame_index + 1) % len(self._spectrum_frames)
+        blend = exact_frame - int(exact_frame)
+        current_frame = self._spectrum_frames[frame_index]
+        next_frame = self._spectrum_frames[next_frame_index]
+        band_position = bar_index / max(bar_count - 1, 1)
+        band_index = min(int(band_position * len(current_frame)), len(current_frame) - 1)
+        current_energy = current_frame[band_index]
+        next_energy = next_frame[band_index]
+        return min(1.0, max(0.0, current_energy + ((next_energy - current_energy) * blend)))
+
+    def _load_mp3_spectrum(self, mp3_path: Path) -> None:
+        """Decode the MP3 and derive frequency-band frames for the visualizer.
+
+        The menu needs a song-reactive visualizer, not audio playback. Decoding
+        through ffmpeg keeps that infrastructure detail outside the future game
+        audio policy while avoiding the false signal created by inspecting
+        compressed MP3 bytes directly.
+
+        @author Codex - connected menu spectrum animation to pulled MIDI/MP3 assets.
+        @author Codex - switched the menu visualizer to the On My Knees MP3 asset.
+        @author Codex - replaced compressed-byte texture with decoded MP3 energy.
+        @author Codex - converted visualizer data from volume wave to spectrum frames.
+        """
+
+        if not mp3_path.exists():
+            return
+        pcm = self._decode_mp3_to_pcm(mp3_path)
+        if not pcm:
+            return
+        samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768
+        if samples.size == 0:
+            return
+        self.duration_seconds = max(1.0, samples.size / self._sample_rate)
+
+        window_size = 2048
+        hop_size = 256
+        band_count = len(self._spectrum_frames[0])
+        if samples.size < window_size:
+            samples = np.pad(samples, (0, window_size - samples.size))
+
+        window = np.hanning(window_size).astype(np.float32)
+        frames: list[list[float]] = []
+        for start in range(0, samples.size - window_size + 1, hop_size):
+            frame = samples[start : start + window_size] * window
+            magnitudes = np.abs(np.fft.rfft(frame))
+            frames.append(self._magnitudes_to_bands(magnitudes, band_count))
+
+        peak = max(max(frame) for frame in frames) if frames else 0.0
+        if peak <= 0:
+            return
+        self._spectrum_frames = [
+            self._smooth_energy([min(1.0, math.sqrt(value / peak)) for value in frame])
+            for frame in frames
+        ]
+
+    def _magnitudes_to_bands(self, magnitudes: np.ndarray, band_count: int) -> list[float]:
+        """Group FFT magnitudes into visual frequency bands.
+
+        @author Codex - converted visualizer data from volume wave to spectrum frames.
+        """
+
+        usable = magnitudes[2:]
+        if usable.size == 0:
+            return [0.0 for _ in range(band_count)]
+        edges = np.geomspace(1, usable.size, band_count + 1).astype(int)
+        edges[0] = 0
+        bands: list[float] = []
+        for index in range(band_count):
+            start = int(edges[index])
+            end = max(start + 1, int(edges[index + 1]))
+            bands.append(float(np.mean(usable[start:end])))
+        return bands
+
+    def _decode_mp3_to_pcm(self, mp3_path: Path) -> bytes:
+        """Return mono PCM bytes decoded from the MP3, or empty bytes on failure.
+
+        @author Codex - replaced compressed-byte texture with decoded MP3 energy.
+        """
+
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            return b""
+        command = [
+            ffmpeg,
+            "-v",
+            "error",
+            "-i",
+            str(mp3_path),
+            "-f",
+            "s16le",
+            "-acodec",
+            "pcm_s16le",
+            "-ac",
+            "1",
+            "-ar",
+            str(self._sample_rate),
+            "-",
+        ]
+        try:
+            result = subprocess.run(command, check=True, capture_output=True)
+        except (OSError, subprocess.CalledProcessError):
+            return b""
+        return result.stdout
+
+    def _smooth_energy(self, energy: list[float]) -> list[float]:
+        """Apply light smoothing without flattening song transients.
+
+        @author Codex - replaced compressed-byte texture with decoded MP3 energy.
+        """
+
+        smoothed: list[float] = []
+        for index, value in enumerate(energy):
+            previous_value = energy[index - 1] if index > 0 else value
+            next_value = energy[index + 1] if index + 1 < len(energy) else value
+            smoothed.append((previous_value * 0.18) + (value * 0.64) + (next_value * 0.18))
+        return smoothed
 
 
 class MainMenuButton(QPushButton):
@@ -79,6 +266,7 @@ class MainMenu(QWidget):
     """
 
     option_selected = Signal(str)
+    option_highlighted = Signal(str)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -191,6 +379,107 @@ class MainMenu(QWidget):
         button = self._buttons[index]
         button.setChecked(True)
         button.setFocus(Qt.FocusReason.OtherFocusReason)
+        self.option_highlighted.emit(button.text())
+
+
+class SpectrumBackground(QWidget):
+    """Decorative spectrum backdrop driven by the highlighted menu option.
+
+    This is intentionally presentation-only: it does not represent live audio
+    and does not leak into menu behavior. The highlighted option only supplies
+    the color family used by the gradient.
+
+    @author Codex - added option-colored spectrum background to the main menu.
+    """
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("spectrumBackground")
+        self._active_color = QColor(MENU_OPTION_COLORS["Play"])
+        self._phase = 0.0
+        self._playhead_seconds = 0.0
+        self._audio_path = choose_visualizer_audio_path()
+        self._track = VisualizerTrack(self._audio_path)
+        self._animation = QTimer(self)
+        self._animation.setInterval(33)
+        self._animation.timeout.connect(self._advance_animation)
+        self._animation.start()
+
+    def set_active_option(self, option: str) -> None:
+        """Update the decorative spectrum color from a stable menu option label.
+
+        @author Codex - added option-colored spectrum background to the main menu.
+        """
+
+        color = MENU_OPTION_COLORS.get(option)
+        if color is None:
+            return
+        self._active_color = QColor(color)
+        self.update()
+
+    def _advance_animation(self) -> None:
+        """Advance the decorative spectrum wave and request a repaint.
+
+        @author Codex - animated the option-colored spectrum background.
+        """
+
+        self._phase = (self._phase + 0.075) % (math.pi * 2)
+        self._playhead_seconds = (self._playhead_seconds + 0.033) % self._track.duration_seconds
+        self.update()
+
+    def paintEvent(self, event: object) -> None:
+        """Paint a darkened gradient spectrum behind the menu.
+
+        @author Codex - added option-colored spectrum background to the main menu.
+        """
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), QColor("#0b0b0b"))
+
+        width = max(self.width(), 1)
+        height = max(self.height(), 1)
+        bar_count = max(28, min(72, width // 18))
+        gap = max(3, width / bar_count * 0.18)
+        bar_width = (width - gap * (bar_count + 1)) / bar_count
+        baseline = height * 0.86
+        max_bar_height = height * 0.58
+
+        for index in range(bar_count):
+            position = index / max(bar_count - 1, 1)
+            track_texture = self._track.energy_at(self._playhead_seconds, index, bar_count)
+            wave = (math.sin(self._phase + position * math.pi * 5.2) + 1.0) / 2.0
+            pulse = (math.sin(self._phase * 0.65 + index * 0.31) + 1.0) / 2.0
+            drift = (math.sin(self._phase * 1.35 + track_texture * math.pi * 2.0) + 1.0) / 2.0
+            strength = 0.07 + (track_texture * 0.84) + (wave * 0.04) + (pulse * 0.03) + (drift * 0.02)
+            bar_height = max_bar_height * min(strength, 1.0)
+            x = gap + index * (bar_width + gap)
+            y = baseline - bar_height
+
+            top_color = self._with_alpha(self._active_color.lighter(135), 128)
+            mid_color = self._with_alpha(self._active_color, 82)
+            bottom_color = self._with_alpha(self._active_color.darker(170), 18)
+
+            gradient = QLinearGradient(0, y, 0, baseline)
+            gradient.setColorAt(0.0, top_color)
+            gradient.setColorAt(0.55, mid_color)
+            gradient.setColorAt(1.0, bottom_color)
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(gradient)
+            painter.drawRoundedRect(QRectF(x, y, bar_width, bar_height), 4, 4)
+
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 150))
+
+    def _with_alpha(self, color: QColor, alpha: int) -> QColor:
+        """Return a copy of ``color`` with the requested alpha channel.
+
+        @author Codex - added option-colored spectrum background to the main menu.
+        """
+
+        copy = QColor(color)
+        copy.setAlpha(alpha)
+        return copy
 
 
 class MainWindow(QMainWindow):
@@ -203,12 +492,23 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self.setWindowTitle("Guitar Hero")
         self.resize(960, 640)
+        self.background = SpectrumBackground()
         self.menu = MainMenu()
-        self.setCentralWidget(self.menu)
+        self.background_layout = QVBoxLayout(self.background)
+        self.background_layout.setContentsMargins(0, 0, 0, 0)
+        self.background_layout.addWidget(self.menu)
+        self.setCentralWidget(self.background)
+        self.menu.option_highlighted.connect(self.background.set_active_option)
+        self.background.set_active_option(MAIN_MENU_OPTIONS[self.menu.current_index()])
         self.setStyleSheet(
             """
-            QMainWindow, QWidget#mainMenu {
+            QMainWindow, QWidget#spectrumBackground {
                 background: #111111;
+                color: #f5f5f5;
+            }
+
+            QWidget#mainMenu {
+                background: transparent;
                 color: #f5f5f5;
             }
 
@@ -224,6 +524,7 @@ class MainWindow(QMainWindow):
                 font-size: 24px;
                 font-weight: 650;
                 letter-spacing: 0;
+                outline: 0;
                 padding: 10px 18px;
                 text-align: left;
             }
@@ -233,6 +534,7 @@ class MainWindow(QMainWindow):
             QPushButton:checked {
                 background: transparent;
                 border: 0;
+                outline: 0;
             }
 
             QPushButton:pressed {
