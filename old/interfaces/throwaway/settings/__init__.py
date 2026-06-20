@@ -1,0 +1,2 @@
+"""Settings mode placeholder panels."""
+
