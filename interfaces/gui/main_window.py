@@ -22,12 +22,11 @@ from PySide6.QtWidgets import (
 )
 
 
-MAIN_MENU_OPTIONS = ("Play", "Training", "Library", "Style")
+MAIN_MENU_OPTIONS = ("Play", "Learn", "Sandbox")
 MENU_OPTION_COLORS = {
     "Play": "#2ee66b",
-    "Training": "#ff4d4d",
-    "Library": "#ffd43b",
-    "Style": "#339af0",
+    "Learn": "#ff4d4d",
+    "Sandbox": "#ffd43b",
 }
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VISUALIZER_MP3_PATH = PROJECT_ROOT / "assets" / "visualizer" / "on-my-knees.mp3"

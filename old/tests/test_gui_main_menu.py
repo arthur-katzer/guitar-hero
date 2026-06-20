@@ -38,7 +38,7 @@ class GuiMainMenuTests(unittest.TestCase):
         self._press(menu, Qt.Key.Key_Down)
         self._press(menu, Qt.Key.Key_Return)
 
-        self.assertEqual(selected, ["Training"])
+        self.assertEqual(selected, ["Learn"])
 
     def test_hover_changes_highlighted_option(self):
         menu = MainMenu()
