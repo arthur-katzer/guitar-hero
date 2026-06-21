@@ -23,6 +23,7 @@ from interfaces.sandbox.audio_pitch import (
     AudioDevice,
     DetectedPluck,
     LivePitchInput,
+    OpenStringFamilyReport,
     PitchFrame,
     PluckDetector,
     SpectrumPeak,
@@ -252,6 +253,56 @@ class DetectedPluckPanel(QFrame):
         )
 
 
+class OpenStringFamiliesPanel(QFrame):
+    """Render open-string family evidence for the last captured pluck.
+
+    The panel is Sandbox-only diagnostic output. It does not replace the
+    single-note pluck readout and deliberately avoids chord names because the
+    detector only scores standard open-string harmonic families.
+
+    @author Codex - added open-string family diagnostic panel.
+    """
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("openStringsPanel")
+        self.setMinimumHeight(320)
+        self.text = QTextEdit()
+        self.text.setReadOnly(True)
+        self.text.setObjectName("openStringsText")
+        self.text.setMinimumHeight(210)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+        title = QLabel("Open String Families")
+        title.setObjectName("sectionTitle")
+        layout.addWidget(title)
+        layout.addWidget(self.text, 1)
+        self.reset()
+
+    def reset(self) -> None:
+        """Clear open-string evidence when a new input session starts.
+
+        @author Codex - added open-string family diagnostic panel.
+        """
+
+        self.text.setHtml("<pre>Waiting for pluck event</pre>")
+
+    def set_report(self, report: OpenStringFamilyReport) -> None:
+        """Render a latched open-string family report from one pluck.
+
+        @author Codex - added open-string family diagnostic panel.
+        """
+
+        lines = ["<pre>Open String Evidence"]
+        for family in report.families:
+            lines.append(f"{family.string_name:2s} {family.score_percent:5.0f}%  {family.status}")
+            lines.append(f"   {family.debug_text}")
+        lines.append("</pre>")
+        self.text.setHtml("\n".join(lines))
+
+
 class SandboxView(QWidget):
     """Live detector workspace for connected instruments.
 
@@ -282,6 +333,7 @@ class SandboxView(QWidget):
         self.peak_chart = SpectrumChart()
         self.top_peaks_panel = TopPeaksPanel()
         self.last_pluck_panel = DetectedPluckPanel()
+        self.open_strings_panel = OpenStringFamiliesPanel()
 
         self._timer = QTimer(self)
         self._timer.setInterval(16)
@@ -347,6 +399,7 @@ class SandboxView(QWidget):
         self._pluck_detector.reset()
         self.last_pluck_panel.reset()
         self.top_peaks_panel.reset()
+        self.open_strings_panel.reset()
         self.start_button.setText("Stop Input")
         self.sample_rate_label.setText(f"Sample rate: {self._input.sample_rate} Hz")
         self.status_label.setText("Listening.")
@@ -392,7 +445,11 @@ class SandboxView(QWidget):
 
         self.status_label.setObjectName("status")
         root.addWidget(self.status_label)
-        root.addWidget(self.last_pluck_panel, 1)
+        pluck_row = QHBoxLayout()
+        pluck_row.setSpacing(10)
+        pluck_row.addWidget(self.last_pluck_panel, 1)
+        pluck_row.addWidget(self.open_strings_panel, 1)
+        root.addLayout(pluck_row, 2)
 
         chart_title = QLabel("Relative Magnitude / Hz")
         chart_title.setObjectName("sectionTitle")
@@ -422,6 +479,7 @@ class SandboxView(QWidget):
         pluck = self._pluck_detector.process_frame(frame, time.monotonic())
         if pluck is not None:
             self.last_pluck_panel.set_pluck(pluck)
+            self.open_strings_panel.set_report(pluck.open_string_families)
             self.top_peaks_panel.set_pluck(pluck)
             self.top_peaks_panel.set_frame(frame)
             self.status_label.setText(f"Detected pluck: {pluck.note_name}.")
@@ -488,6 +546,19 @@ class SandboxView(QWidget):
                 background: #111824;
                 border: 1px solid #243043;
                 border-radius: 8px;
+            }
+            #openStringsPanel {
+                background: #111824;
+                border: 1px solid #243043;
+                border-radius: 8px;
+            }
+            #openStringsText {
+                background: #080b10;
+                border: 1px solid #25344a;
+                border-radius: 6px;
+                color: #d8e2ef;
+                font-family: JetBrains Mono, Consolas, monospace;
+                font-size: 12px;
             }
             #lastPluckNote {
                 color: #21d4fd;

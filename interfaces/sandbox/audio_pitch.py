@@ -26,6 +26,14 @@ DEFAULT_BLOCK_MS = 50
 MIN_HZ = 60.0
 MAX_HZ = 1_200.0
 NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+OPEN_STRING_CANDIDATES: tuple[tuple[str, int, float], ...] = (
+    ("E2", 40, 82.41),
+    ("A2", 45, 110.00),
+    ("D3", 50, 146.83),
+    ("G3", 55, 196.00),
+    ("B3", 59, 246.94),
+    ("E4", 64, 329.63),
+)
 
 
 @dataclass(frozen=True)
@@ -80,6 +88,82 @@ class PitchFrame:
 
 
 @dataclass(frozen=True)
+class OpenStringHarmonicMatch:
+    """One observed peak supporting an open-string harmonic family.
+
+    The sandbox needs to show why a string was considered without promoting a
+    shared harmonic to a played string. ``overlap_notes`` records lower open
+    strings that can also explain the same peak.
+
+    @author Codex - added open-string family diagnostic.
+    """
+
+    harmonic: int
+    expected_hz: float
+    observed_hz: float
+    strength_percent: float
+    overlap_notes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class OpenStringFamilyEvidence:
+    """Evidence summary for one standard-tuning open string.
+
+    This is diagnostic policy, not chord naming. It answers whether the pluck
+    capture window contains harmonic evidence for one open-string family while
+    preserving uncertainty and harmonic overlap.
+
+    @author Codex - added open-string family diagnostic.
+    """
+
+    string_name: str
+    midi: int
+    frequency_hz: float
+    score_percent: float
+    status: str
+    matches: tuple[OpenStringHarmonicMatch, ...]
+    debug_text: str
+
+
+@dataclass(frozen=True)
+class OpenStringFamilyReport:
+    """Diagnostic report for all standard open guitar strings.
+
+    The report keeps guitar-order rows for the UI and a ranked view for future
+    debugging without changing the single-note pluck contract.
+
+    @author Codex - added open-string family diagnostic.
+    """
+
+    families: tuple[OpenStringFamilyEvidence, ...]
+    ranked: tuple[OpenStringFamilyEvidence, ...]
+
+
+def inactive_open_string_report() -> OpenStringFamilyReport:
+    """Return a report with every open string marked inactive.
+
+    Silence and no-peak captures still need a complete diagnostic table so the
+    Sandbox UI does not have to invent default domain rows.
+
+    @author Codex - added open-string family diagnostic.
+    """
+
+    families = tuple(
+        OpenStringFamilyEvidence(
+            string_name=name,
+            midi=midi,
+            frequency_hz=frequency,
+            score_percent=0.0,
+            status="inactive",
+            matches=(),
+            debug_text="no peaks in captured pluck window",
+        )
+        for name, midi, frequency in OPEN_STRING_CANDIDATES
+    )
+    return OpenStringFamilyReport(families=families, ranked=families)
+
+
+@dataclass(frozen=True)
 class DetectedPluck:
     """A note event classified from one physical pluck, not one FFT frame.
 
@@ -99,6 +183,7 @@ class DetectedPluck:
     started_at: float
     ended_at: float | None
     reason: str
+    open_string_families: OpenStringFamilyReport
 
 
 @dataclass(frozen=True)
@@ -140,6 +225,168 @@ class _PluckCandidate:
             self.frame_indexes = set()
 
 
+class OpenStringFamilyDetector:
+    """Score standard open-string families from one pluck capture window.
+
+    Open-string evidence is intentionally separate from the note detector. A
+    multi-string pluck can contain multiple valid harmonic families, while the
+    existing pluck detector still emits one stable note for the legacy readout.
+
+    @author Codex - added open-string family diagnostic.
+    """
+
+    MATCH_TOLERANCE = 0.035
+    MIN_PEAK_PERCENT = 8.0
+
+    def analyze_frames(self, frames: list[PitchFrame]) -> OpenStringFamilyReport:
+        """Return evidence for each standard-tuning open string.
+
+        The detector consumes the captured attack window because the business
+        question is "which open strings have evidence in this pluck", not which
+        note dominates one volatile FFT frame.
+
+        @author Codex - added open-string family diagnostic.
+        """
+
+        if not any(frame.peaks for frame in frames):
+            return inactive_open_string_report()
+
+        families: list[OpenStringFamilyEvidence] = []
+        stronger_active: list[OpenStringFamilyEvidence] = []
+        for name, midi, frequency in OPEN_STRING_CANDIDATES:
+            matches = self._matches_for_family(name, frequency, frames, stronger_active)
+            evidence = self._evidence_for_family(name, midi, frequency, matches, stronger_active)
+            families.append(evidence)
+            if evidence.status == "active":
+                stronger_active.append(evidence)
+
+        return OpenStringFamilyReport(
+            families=tuple(families),
+            ranked=tuple(sorted(families, key=lambda family: family.score_percent, reverse=True)),
+        )
+
+    def _matches_for_family(
+        self,
+        name: str,
+        frequency_hz: float,
+        frames: list[PitchFrame],
+        stronger_active: list[OpenStringFamilyEvidence],
+    ) -> tuple[OpenStringHarmonicMatch, ...]:
+        matches: list[OpenStringHarmonicMatch] = []
+        for harmonic in range(1, 7):
+            expected_hz = frequency_hz * harmonic
+            possible_matches = [
+                peak
+                for frame in frames
+                for peak in frame.peaks
+                if peak.relative_percent >= self.MIN_PEAK_PERCENT
+                and harmonic_error(frequency_hz, peak.frequency_hz, harmonic) <= self.MATCH_TOLERANCE
+            ]
+            if not possible_matches:
+                continue
+            peak = max(possible_matches, key=lambda candidate: candidate.relative_percent)
+            overlap_notes = tuple(
+                family.string_name
+                for family in stronger_active
+                if self._peak_matches_family(peak.frequency_hz, family.frequency_hz)
+            )
+            matches.append(
+                OpenStringHarmonicMatch(
+                    harmonic=harmonic,
+                    expected_hz=expected_hz,
+                    observed_hz=peak.frequency_hz,
+                    strength_percent=peak.relative_percent,
+                    overlap_notes=overlap_notes,
+                )
+            )
+        return tuple(matches)
+
+    def _evidence_for_family(
+        self,
+        name: str,
+        midi: int,
+        frequency_hz: float,
+        matches: tuple[OpenStringHarmonicMatch, ...],
+        stronger_active: list[OpenStringFamilyEvidence],
+    ) -> OpenStringFamilyEvidence:
+        raw_score = self._raw_score(matches)
+        independent_matches = tuple(match for match in matches if not match.overlap_notes)
+        independent_score = self._raw_score(independent_matches)
+        has_independent_fundamental = any(match.harmonic == 1 for match in independent_matches)
+        independent_harmonics = {match.harmonic for match in independent_matches}
+        overlap_heavy = raw_score >= 20.0 and independent_score < max(20.0, raw_score * 0.45)
+
+        if independent_score >= 55.0 and (has_independent_fundamental or len(independent_harmonics) >= 3):
+            status = "active"
+            score = independent_score
+        elif overlap_heavy:
+            status = "harmonic overlap"
+            score = min(45.0, max(20.0, raw_score * 0.4))
+        elif independent_score >= 20.0:
+            status = "uncertain"
+            score = independent_score
+        else:
+            status = "inactive"
+            score = max(independent_score, raw_score if matches and not stronger_active else 0.0)
+
+        return OpenStringFamilyEvidence(
+            string_name=name,
+            midi=midi,
+            frequency_hz=frequency_hz,
+            score_percent=min(100.0, round(score, 1)),
+            status=status,
+            matches=matches,
+            debug_text=self._debug_text(matches, independent_matches, status),
+        )
+
+    def _raw_score(self, matches: tuple[OpenStringHarmonicMatch, ...]) -> float:
+        if not matches:
+            return 0.0
+        score = 0.0
+        for match in matches:
+            strength = min(match.strength_percent, 100.0) / 100.0
+            if match.harmonic == 1:
+                score += 45.0 * strength + 20.0
+            elif match.harmonic <= 3:
+                score += 18.0 * strength + 6.0
+            else:
+                score += 12.0 * strength + 4.0
+        if len(matches) >= 2:
+            score += 12.0
+        if len(matches) >= 3:
+            score += 10.0
+        return min(100.0, score)
+
+    def _peak_matches_family(self, peak_hz: float, family_frequency_hz: float) -> bool:
+        for harmonic in range(1, 7):
+            if harmonic_error(family_frequency_hz, peak_hz, harmonic) <= self.MATCH_TOLERANCE:
+                return True
+        return False
+
+    def _debug_text(
+        self,
+        matches: tuple[OpenStringHarmonicMatch, ...],
+        independent_matches: tuple[OpenStringHarmonicMatch, ...],
+        status: str,
+    ) -> str:
+        if not matches:
+            return "no visible harmonics matched 1x-6x"
+
+        parts = [
+            "matched harmonics: "
+            + ", ".join(
+                f"{match.harmonic}x={match.observed_hz:.0f} Hz"
+                + (f" overlaps {'/'.join(match.overlap_notes)}" if match.overlap_notes else "")
+                for match in matches
+            )
+        ]
+        if not any(match.harmonic == 1 for match in independent_matches):
+            parts.append("fundamental weak/missing")
+        if status == "harmonic overlap":
+            parts.append("evidence mostly explained by stronger lower-string families")
+        return "; ".join(parts)
+
+
 class PluckDetector:
     """Convert live FFT frames into stable pluck-level note events.
 
@@ -169,6 +416,7 @@ class PluckDetector:
         self.release_rms_threshold = release_rms_threshold
         self.capture_window_seconds = capture_window_seconds
         self.release_window_seconds = release_window_seconds
+        self._open_string_detector = OpenStringFamilyDetector()
         self.reset()
 
     @property
@@ -297,6 +545,7 @@ class PluckDetector:
         harmonic_matches = format_multiples(harmonic_multiples).split(", ") if harmonic_multiples else []
         confidence = self._confidence(candidate, len(frames), harmonic_multiples)
         reason = self._reason(frequency_hz, harmonic_matches)
+        open_string_families = self._open_string_detector.analyze_frames(frames)
         return DetectedPluck(
             note_name=note_name,
             midi=candidate.midi,
@@ -307,6 +556,7 @@ class PluckDetector:
             started_at=self._started_at,
             ended_at=None,
             reason=reason,
+            open_string_families=open_string_families,
         )
 
     def _frame_evidence(self, frame: PitchFrame, frame_index: int) -> dict[int, _PluckEvidence]:
