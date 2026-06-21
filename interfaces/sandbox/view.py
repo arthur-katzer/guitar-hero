@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from interfaces.debug_dump import dump
 from interfaces.sandbox.audio_pitch import (
     AudioDevice,
     DetectedPluck,
@@ -389,6 +390,7 @@ class SandboxView(QWidget):
         self._apply_style()
         self._connect_signals()
         self.refresh_devices()
+        dump("sandbox", "ready")
 
     def closeEvent(self, event: object) -> None:
         """Stop the audio stream when the widget is closed.
@@ -420,6 +422,21 @@ class SandboxView(QWidget):
             self.device_combo.setCurrentIndex(codec_index)
         self.start_button.setEnabled(bool(self._devices))
         self.status_label.setText("No input devices found." if not self._devices else "Ready.")
+        dump(
+            "sandbox",
+            "devices_refreshed",
+            count=len(self._devices),
+            devices=[
+                {
+                    "index": device.index,
+                    "name": device.name,
+                    "inputs": device.input_channels,
+                    "sample_rate": device.default_sample_rate,
+                }
+                for device in self._devices
+            ],
+            selected=self.device_combo.currentData(),
+        )
         if self._devices and not self._running:
             QTimer.singleShot(0, self.start_input)
 
@@ -430,16 +447,20 @@ class SandboxView(QWidget):
         """
 
         if self._running:
+            dump("sandbox", "input_toggle_stop")
             self.stop_input()
             return
         device_index = self.device_combo.currentData()
         if device_index is None:
             self.status_label.setText("No input device selected.")
+            dump("sandbox", "input_start_blocked", reason="no_device")
             return
         try:
+            dump("sandbox", "input_start_requested", device_index=device_index)
             self._input.start(int(device_index))
         except Exception as exc:
             self.status_label.setText(f"Could not open input: {exc}")
+            dump("sandbox", "input_start_failed", device_index=device_index, error=str(exc))
             return
         self._running = True
         self._pluck_detector.reset()
@@ -452,6 +473,7 @@ class SandboxView(QWidget):
         self._frame_count = 0
         self._last_readout_at = 0.0
         self._timer.start()
+        dump("sandbox", "input_started", device_index=device_index, sample_rate=self._input.sample_rate)
 
     def stop_input(self) -> None:
         """Stop live capture and leave the last frame visible.
@@ -464,6 +486,7 @@ class SandboxView(QWidget):
         self._running = False
         self.start_button.setText("Start Input")
         self.status_label.setText("Stopped.")
+        dump("sandbox", "input_stopped")
 
     def _build_layout(self) -> None:
         root = QVBoxLayout(self)
@@ -524,6 +547,19 @@ class SandboxView(QWidget):
     def _render_frame(self, frame: PitchFrame) -> None:
         pluck = self._pluck_detector.process_frame(frame, time.monotonic())
         if pluck is not None:
+            dump(
+                "sandbox",
+                "pluck",
+                note=pluck.note_name,
+                midi=pluck.midi,
+                frequency_hz=pluck.frequency_hz,
+                confidence=pluck.confidence,
+                dominant_hz=pluck.dominant_frequency_hz,
+                reason=pluck.reason,
+                open_strings=_open_string_dump(pluck.open_string_families),
+                likely_peak=_peak_dump(frame.likely_fundamental),
+                dominant_peak=_peak_dump(frame.dominant_peak),
+            )
             self.last_pluck_panel.set_pluck(pluck)
             self.open_strings_panel.set_report(pluck.open_string_families)
             self.top_peaks_panel.set_pluck(pluck)
@@ -537,6 +573,16 @@ class SandboxView(QWidget):
         if now - self._last_readout_at < 0.75:
             return
         self._last_readout_at = now
+        dump(
+            "sandbox",
+            "frame",
+            frame_count=self._frame_count,
+            rms=frame.rms,
+            confidence=frame.confidence,
+            reason=frame.reason,
+            likely_peak=_peak_dump(frame.likely_fundamental),
+            dominant_peak=_peak_dump(frame.dominant_peak),
+        )
         self.top_peaks_panel.set_frame(frame)
 
     def _apply_style(self) -> None:
@@ -620,3 +666,38 @@ class SandboxView(QWidget):
             }
             """
         )
+
+
+def _peak_dump(peak: SpectrumPeak | None) -> dict[str, object] | None:
+    """Return compact pitch-peak data for terminal diagnostics.
+
+    @author Codex - added Sandbox terminal debug dump.
+    """
+
+    if peak is None:
+        return None
+    return {
+        "note": peak.note,
+        "midi": peak.midi,
+        "hz": round(peak.frequency_hz, 3),
+        "percent": round(getattr(peak, "relative_percent", 0.0), 2),
+        "relationship": getattr(peak, "harmonic_relationship", None),
+    }
+
+
+def _open_string_dump(report: OpenStringFamilyReport) -> list[dict[str, object]]:
+    """Return active open-string family evidence for terminal diagnostics.
+
+    @author Codex - added Sandbox terminal debug dump.
+    """
+
+    return [
+        {
+            "string": family.string_name,
+            "midi": family.midi,
+            "score": round(family.score_percent, 2),
+            "status": family.status,
+        }
+        for family in report.ranked
+        if family.status != "inactive"
+    ][:6]

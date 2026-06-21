@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from interfaces.debug_dump import dump
+from interfaces.learn.view import LearnView
 from interfaces.sandbox.view import SandboxView
 
 
@@ -488,6 +490,7 @@ class MainWindow(QMainWindow):
     """Host the current GUI entry screen.
 
     @author Codex - created the replacement main menu interface.
+    @author Codex - wired Learn mode into the main menu shell.
     """
 
     def __init__(self, parent: QWidget | None = None):
@@ -496,18 +499,22 @@ class MainWindow(QMainWindow):
         self.resize(960, 640)
         self.background = SpectrumBackground()
         self.menu = MainMenu()
+        self.learn = LearnView()
         self.sandbox = SandboxView()
         self.screens = QStackedWidget()
         self.background_layout = QVBoxLayout(self.background)
         self.background_layout.setContentsMargins(0, 0, 0, 0)
         self.background_layout.addWidget(self.menu)
         self.screens.addWidget(self.background)
+        self.screens.addWidget(self.learn)
         self.screens.addWidget(self.sandbox)
         self.setCentralWidget(self.screens)
         self.menu.option_highlighted.connect(self.background.set_active_option)
         self.menu.option_selected.connect(self._open_option)
+        self.learn.back_requested.connect(self._show_menu)
         self.sandbox.back_requested.connect(self._show_menu)
         self.background.set_active_option(MAIN_MENU_OPTIONS[self.menu.current_index()])
+        dump("main", "window_ready", initial_option=MAIN_MENU_OPTIONS[self.menu.current_index()])
         self.setStyleSheet(
             """
             QMainWindow, QWidget#spectrumBackground {
@@ -554,19 +561,38 @@ class MainWindow(QMainWindow):
     def _open_option(self, option: str) -> None:
         """Open the selected top-level screen when the use case exists.
 
-        Sandbox is the first operational destination. Play and Learn remain
-        navigation labels until their use cases are defined.
+        Sandbox and Learn are operational destinations. Play remains a
+        navigation label until its full-speed testing use case is defined.
 
         @author Codex - wired operational sandbox screen into the main menu.
+        @author Codex - wired Learn mode into the main menu shell.
+        @author Codex - prevented Learn and Sandbox from sharing live input concurrently.
         """
 
+        if option == "Learn":
+            dump("main", "open_option", option=option)
+            self.sandbox.stop_input()
+            self.screens.setCurrentWidget(self.learn)
+            self.learn.activate()
+            return
         if option == "Sandbox":
+            dump("main", "open_option", option=option)
+            self.learn.deactivate()
             self.screens.setCurrentWidget(self.sandbox)
+            if not getattr(self.sandbox, "_running", False):
+                self.sandbox.start_input()
+            return
+        dump("main", "open_option_unimplemented", option=option)
 
     def _show_menu(self) -> None:
         """Return from an operational screen to the main menu.
 
         @author Codex - wired operational sandbox screen into the main menu.
+        @author Codex - wired Learn mode into the main menu shell.
+        @author Codex - stopped active live input when leaving operational screens.
         """
 
+        dump("main", "show_menu")
+        self.learn.deactivate()
+        self.sandbox.stop_input()
         self.screens.setCurrentWidget(self.background)
