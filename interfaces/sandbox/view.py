@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QPushButton,
     QSizePolicy,
     QTextEdit,
@@ -266,19 +267,33 @@ class OpenStringFamiliesPanel(QFrame):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("openStringsPanel")
-        self.setMinimumHeight(320)
-        self.text = QTextEdit()
-        self.text.setReadOnly(True)
-        self.text.setObjectName("openStringsText")
-        self.text.setMinimumHeight(210)
+        self.setMinimumHeight(230)
+        self._rows: dict[str, tuple[QLabel, QProgressBar, QLabel]] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(8)
+        layout.setSpacing(7)
         title = QLabel("Open String Families")
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
-        layout.addWidget(self.text, 1)
+        for string_name in ("E2", "A2", "D3", "G3", "B3", "E4"):
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            name = QLabel(string_name)
+            name.setObjectName("openStringName")
+            bar = QProgressBar()
+            bar.setObjectName("openStringBar")
+            bar.setRange(0, 100)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(12)
+            detail = QLabel("0% inactive")
+            detail.setObjectName("openStringDetail")
+            detail.setMinimumWidth(128)
+            row.addWidget(name)
+            row.addWidget(bar, 1)
+            row.addWidget(detail)
+            layout.addLayout(row)
+            self._rows[string_name] = (name, bar, detail)
         self.reset()
 
     def reset(self) -> None:
@@ -287,7 +302,12 @@ class OpenStringFamiliesPanel(QFrame):
         @author Codex - added open-string family diagnostic panel.
         """
 
-        self.text.setHtml("<pre>Waiting for pluck event</pre>")
+        for string_name, (_name, bar, detail) in self._rows.items():
+            bar.setValue(0)
+            bar.setToolTip("Waiting for pluck event")
+            detail.setText("0% inactive")
+            detail.setToolTip("Waiting for pluck event")
+            self._set_bar_status(bar, "inactive")
 
     def set_report(self, report: OpenStringFamilyReport) -> None:
         """Render a latched open-string family report from one pluck.
@@ -295,12 +315,38 @@ class OpenStringFamiliesPanel(QFrame):
         @author Codex - added open-string family diagnostic panel.
         """
 
-        lines = ["<pre>Open String Evidence"]
         for family in report.families:
-            lines.append(f"{family.string_name:2s} {family.score_percent:5.0f}%  {family.status}")
-            lines.append(f"   {family.debug_text}")
-        lines.append("</pre>")
-        self.text.setHtml("\n".join(lines))
+            row = self._rows.get(family.string_name)
+            if row is None:
+                continue
+            _name, bar, detail = row
+            score = int(round(family.score_percent))
+            bar.setValue(score)
+            bar.setToolTip(family.debug_text)
+            detail.setText(f"{score}% {family.status}")
+            detail.setToolTip(family.debug_text)
+            self._set_bar_status(bar, family.status)
+
+    def _set_bar_status(self, bar: QProgressBar, status: str) -> None:
+        color = {
+            "active": "#3ddc84",
+            "uncertain": "#ffd43b",
+            "harmonic overlap": "#21d4fd",
+            "inactive": "#5f6875",
+        }.get(status, "#5f6875")
+        bar.setStyleSheet(
+            f"""
+            QProgressBar {{
+                background: #080b10;
+                border: 1px solid #25344a;
+                border-radius: 6px;
+            }}
+            QProgressBar::chunk {{
+                background: {color};
+                border-radius: 5px;
+            }}
+            """
+        )
 
 
 class SandboxView(QWidget):
@@ -552,11 +598,14 @@ class SandboxView(QWidget):
                 border: 1px solid #243043;
                 border-radius: 8px;
             }
-            #openStringsText {
-                background: #080b10;
-                border: 1px solid #25344a;
-                border-radius: 6px;
+            #openStringName {
                 color: #d8e2ef;
+                font-family: JetBrains Mono, Consolas, monospace;
+                font-weight: 800;
+                min-width: 32px;
+            }
+            #openStringDetail {
+                color: #b8c7dc;
                 font-family: JetBrains Mono, Consolas, monospace;
                 font-size: 12px;
             }

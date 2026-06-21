@@ -26,6 +26,7 @@ DEFAULT_BLOCK_MS = 50
 MIN_HZ = 60.0
 MAX_HZ = 1_200.0
 NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+LOW_OPEN_STRING_NAMES = ("E2", "A2")
 OPEN_STRING_CANDIDATES: tuple[tuple[str, int, float], ...] = (
     ("E2", 40, 82.41),
     ("A2", 45, 110.00),
@@ -92,8 +93,9 @@ class OpenStringHarmonicMatch:
     """One observed peak supporting an open-string harmonic family.
 
     The sandbox needs to show why a string was considered without promoting a
-    shared harmonic to a played string. ``overlap_notes`` records lower open
-    strings that can also explain the same peak.
+    shared harmonic to a played string. ``overlap_notes`` records open strings
+    that can explain the same peak with stronger context, including active
+    lower families and direct higher-string fundamentals.
 
     @author Codex - added open-string family diagnostic.
     """
@@ -103,6 +105,19 @@ class OpenStringHarmonicMatch:
     observed_hz: float
     strength_percent: float
     overlap_notes: tuple[str, ...]
+    evidence_level: str = "present"
+
+    def relative_strength_is_present(self) -> bool:
+        """Return whether this match is strong enough for normal evidence.
+
+        Weak low-string anchors help E2/A2 stay visible, but co-present overlap
+        needs normally visible support before an overlapped fundamental can be
+        treated as a real played string.
+
+        @author Codex - added co-present overlap handling.
+        """
+
+        return self.evidence_level == "present"
 
 
 @dataclass(frozen=True)
@@ -233,10 +248,15 @@ class OpenStringFamilyDetector:
     existing pluck detector still emits one stable note for the legacy readout.
 
     @author Codex - added open-string family diagnostic.
+    @author Codex - added cautious weak-anchor handling for low open strings.
     """
 
     MATCH_TOLERANCE = 0.035
     MIN_PEAK_PERCENT = 8.0
+    WEAK_LOW_ANCHOR_PEAK_PERCENT = 4.0
+    STRONG_SECOND_HARMONIC_PERCENT = 25.0
+    ACTIVE_SCORE_THRESHOLD = 55.0
+    UNCERTAIN_SCORE_THRESHOLD = 25.0
 
     def analyze_frames(self, frames: list[PitchFrame]) -> OpenStringFamilyReport:
         """Return evidence for each standard-tuning open string.
@@ -255,7 +275,7 @@ class OpenStringFamilyDetector:
         stronger_active: list[OpenStringFamilyEvidence] = []
         for name, midi, frequency in OPEN_STRING_CANDIDATES:
             matches = self._matches_for_family(name, frequency, frames, stronger_active)
-            evidence = self._evidence_for_family(name, midi, frequency, matches, stronger_active)
+            evidence = self._evidence_for_family(name, midi, frequency, matches, stronger_active, frames)
             families.append(evidence)
             if evidence.status == "active":
                 stronger_active.append(evidence)
@@ -279,7 +299,7 @@ class OpenStringFamilyDetector:
                 peak
                 for frame in frames
                 for peak in frame.peaks
-                if peak.relative_percent >= self.MIN_PEAK_PERCENT
+                if peak.relative_percent >= self._minimum_peak_percent(name, harmonic)
                 and harmonic_error(frequency_hz, peak.frequency_hz, harmonic) <= self.MATCH_TOLERANCE
             ]
             if not possible_matches:
@@ -289,7 +309,8 @@ class OpenStringFamilyDetector:
                 family.string_name
                 for family in stronger_active
                 if self._peak_matches_family(peak.frequency_hz, family.frequency_hz)
-            )
+            ) + self._higher_fundamental_overlaps(name, frequency_hz, peak.frequency_hz)
+            overlap_notes = tuple(dict.fromkeys(overlap_notes))
             matches.append(
                 OpenStringHarmonicMatch(
                     harmonic=harmonic,
@@ -297,6 +318,7 @@ class OpenStringFamilyDetector:
                     observed_hz=peak.frequency_hz,
                     strength_percent=peak.relative_percent,
                     overlap_notes=overlap_notes,
+                    evidence_level="weak" if peak.relative_percent < self.MIN_PEAK_PERCENT else "present",
                 )
             )
         return tuple(matches)
@@ -308,26 +330,64 @@ class OpenStringFamilyDetector:
         frequency_hz: float,
         matches: tuple[OpenStringHarmonicMatch, ...],
         stronger_active: list[OpenStringFamilyEvidence],
+        frames: list[PitchFrame],
     ) -> OpenStringFamilyEvidence:
         raw_score = self._raw_score(matches)
-        independent_matches = tuple(match for match in matches if not match.overlap_notes)
-        independent_score = self._raw_score(independent_matches)
-        has_independent_fundamental = any(match.harmonic == 1 for match in independent_matches)
-        independent_harmonics = {match.harmonic for match in independent_matches}
-        overlap_heavy = raw_score >= 20.0 and independent_score < max(20.0, raw_score * 0.45)
+        lower_overlap_notes = {family.string_name for family in stronger_active}
+        lower_independent_matches = tuple(
+            match
+            for match in matches
+            if not lower_overlap_notes.intersection(match.overlap_notes)
+        )
+        co_present_anchor_matches = self._co_present_anchor_matches(
+            matches,
+            lower_independent_matches,
+            lower_overlap_notes,
+        )
+        scoring_matches = tuple(dict.fromkeys(lower_independent_matches + co_present_anchor_matches))
+        score_basis = self._raw_score(scoring_matches)
+        active_anchor = self._has_active_anchor(scoring_matches)
+        uncertain_anchor = self._has_uncertain_anchor(scoring_matches)
+        has_lower_overlap = any(
+            lower_overlap_notes.intersection(match.overlap_notes)
+            for match in matches
+        )
+        has_higher_fundamental_overlap = any(
+            any(note not in lower_overlap_notes for note in match.overlap_notes)
+            for match in matches
+        )
+        lower_overlap_heavy = (
+            raw_score >= 20.0
+            and has_lower_overlap
+            and (
+                any(match.harmonic == 1 for match in matches)
+                or len(matches) >= 2
+            )
+            and score_basis < max(20.0, raw_score * 0.45)
+            and not co_present_anchor_matches
+        )
+        subharmonic_hallucination = (
+            raw_score >= 20.0
+            and has_higher_fundamental_overlap
+            and not active_anchor
+            and len(matches) >= 2
+        )
 
-        if independent_score >= 55.0 and (has_independent_fundamental or len(independent_harmonics) >= 3):
+        if score_basis >= self.ACTIVE_SCORE_THRESHOLD and active_anchor:
             status = "active"
-            score = independent_score
-        elif overlap_heavy:
+            score = score_basis
+        elif lower_overlap_heavy or subharmonic_hallucination:
             status = "harmonic overlap"
             score = min(45.0, max(20.0, raw_score * 0.4))
-        elif independent_score >= 20.0:
+        elif (
+            score_basis >= self.UNCERTAIN_SCORE_THRESHOLD
+            and uncertain_anchor
+        ):
             status = "uncertain"
-            score = independent_score
+            score = score_basis
         else:
             status = "inactive"
-            score = max(independent_score, raw_score if matches and not stronger_active else 0.0)
+            score = min(self.UNCERTAIN_SCORE_THRESHOLD - 1.0, score_basis)
 
         return OpenStringFamilyEvidence(
             string_name=name,
@@ -336,8 +396,21 @@ class OpenStringFamilyDetector:
             score_percent=min(100.0, round(score, 1)),
             status=status,
             matches=matches,
-            debug_text=self._debug_text(matches, independent_matches, status),
+            debug_text=self._debug_text(
+                name,
+                frequency_hz,
+                frames,
+                matches,
+                scoring_matches,
+                co_present_anchor_matches,
+                status,
+            ),
         )
+
+    def _minimum_peak_percent(self, name: str, harmonic: int) -> float:
+        if name in LOW_OPEN_STRING_NAMES and harmonic in {1, 2}:
+            return self.WEAK_LOW_ANCHOR_PEAK_PERCENT
+        return self.MIN_PEAK_PERCENT
 
     def _raw_score(self, matches: tuple[OpenStringHarmonicMatch, ...]) -> float:
         if not matches:
@@ -346,15 +419,24 @@ class OpenStringFamilyDetector:
         for match in matches:
             strength = min(match.strength_percent, 100.0) / 100.0
             if match.harmonic == 1:
-                score += 45.0 * strength + 20.0
-            elif match.harmonic <= 3:
-                score += 18.0 * strength + 6.0
+                score += 50.0 * strength + 20.0
+            elif match.harmonic == 2:
+                score += 24.0 * strength + 8.0
+            elif match.harmonic == 3:
+                score += 16.0 * strength + 5.0
+            elif match.harmonic == 4:
+                score += 10.0 * strength + 3.0
+            elif match.harmonic == 5:
+                score += 5.0 * strength + 1.0
             else:
-                score += 12.0 * strength + 4.0
-        if len(matches) >= 2:
-            score += 12.0
-        if len(matches) >= 3:
-            score += 10.0
+                score += 4.0 * strength + 1.0
+        low_order_count = len({match.harmonic for match in matches if match.harmonic <= 4})
+        if low_order_count >= 2:
+            score += 8.0
+        if low_order_count >= 3:
+            score += 6.0
+        if low_order_count >= 4:
+            score += 4.0
         return min(100.0, score)
 
     def _peak_matches_family(self, peak_hz: float, family_frequency_hz: float) -> bool:
@@ -363,28 +445,131 @@ class OpenStringFamilyDetector:
                 return True
         return False
 
-    def _debug_text(
+    def _higher_fundamental_overlaps(
+        self,
+        name: str,
+        frequency_hz: float,
+        peak_hz: float,
+    ) -> tuple[str, ...]:
+        return tuple(
+            candidate_name
+            for candidate_name, _midi, candidate_frequency in OPEN_STRING_CANDIDATES
+            if candidate_name != name
+            and candidate_frequency > frequency_hz
+            and harmonic_error(candidate_frequency, peak_hz, 1) <= self.MATCH_TOLERANCE
+        )
+
+    def _has_active_anchor(self, matches: tuple[OpenStringHarmonicMatch, ...]) -> bool:
+        has_fundamental = any(
+            match.harmonic == 1
+            and (
+                match.evidence_level == "present"
+                or any(other.harmonic in {2, 3, 4} for other in matches)
+            )
+            for match in matches
+        )
+        strong_second = any(
+            match.harmonic == 2
+            and match.strength_percent >= self.STRONG_SECOND_HARMONIC_PERCENT
+            for match in matches
+        )
+        low_order_harmonics = {match.harmonic for match in matches if match.harmonic <= 4}
+        return has_fundamental or (strong_second and len(low_order_harmonics) >= 2)
+
+    def _has_uncertain_anchor(self, matches: tuple[OpenStringHarmonicMatch, ...]) -> bool:
+        if any(match.harmonic in {1, 2} for match in matches):
+            return True
+        low_order_harmonics = {match.harmonic for match in matches if match.harmonic <= 4}
+        return len(low_order_harmonics) >= 3 and min(low_order_harmonics, default=99) <= 3
+
+    def _co_present_anchor_matches(
         self,
         matches: tuple[OpenStringHarmonicMatch, ...],
-        independent_matches: tuple[OpenStringHarmonicMatch, ...],
+        lower_independent_matches: tuple[OpenStringHarmonicMatch, ...],
+        lower_overlap_notes: set[str],
+    ) -> tuple[OpenStringHarmonicMatch, ...]:
+        if not lower_overlap_notes:
+            return ()
+        independent_low_support = [
+            match
+            for match in lower_independent_matches
+            if 2 <= match.harmonic <= 4 and match.relative_strength_is_present()
+        ]
+        has_near_anchor_support = any(match.harmonic in {2, 3} for match in independent_low_support)
+        has_multiple_low_support = len({match.harmonic for match in independent_low_support}) >= 2
+        if not has_near_anchor_support and not has_multiple_low_support:
+            return ()
+        return tuple(
+            match
+            for match in matches
+            if match.harmonic in {1, 2}
+            and lower_overlap_notes.intersection(match.overlap_notes)
+            and match.relative_strength_is_present()
+        )
+
+    def _debug_text(
+        self,
+        name: str,
+        frequency_hz: float,
+        frames: list[PitchFrame],
+        matches: tuple[OpenStringHarmonicMatch, ...],
+        scoring_matches: tuple[OpenStringHarmonicMatch, ...],
+        co_present_anchor_matches: tuple[OpenStringHarmonicMatch, ...],
         status: str,
     ) -> str:
         if not matches:
+            low_string_trace = self._low_string_trace(name, frequency_hz, frames)
+            if low_string_trace:
+                return f"no visible harmonics matched 1x-6x; {low_string_trace}"
             return "no visible harmonics matched 1x-6x"
 
         parts = [
             "matched harmonics: "
             + ", ".join(
                 f"{match.harmonic}x={match.observed_hz:.0f} Hz"
+                + (" weak" if match.evidence_level == "weak" else "")
                 + (f" overlaps {'/'.join(match.overlap_notes)}" if match.overlap_notes else "")
                 for match in matches
             )
         ]
-        if not any(match.harmonic == 1 for match in independent_matches):
-            parts.append("fundamental weak/missing")
+        low_string_trace = self._low_string_trace(name, frequency_hz, frames)
+        if low_string_trace:
+            parts.append(low_string_trace)
+        if co_present_anchor_matches:
+            parts.append("overlapped 1x/2x retained because independent harmonics support co-present string")
+        if not any(match.harmonic == 1 for match in scoring_matches):
+            parts.append("independent fundamental weak/missing")
+        if matches and not self._has_uncertain_anchor(scoring_matches):
+            parts.append("no 1x/2x anchor; upper harmonics are diagnostic only")
         if status == "harmonic overlap":
-            parts.append("evidence mostly explained by stronger lower-string families")
+            parts.append("evidence mostly explained by overlapping open-string families")
         return "; ".join(parts)
+
+    def _low_string_trace(
+        self,
+        name: str,
+        frequency_hz: float,
+        frames: list[PitchFrame],
+    ) -> str:
+        if name not in LOW_OPEN_STRING_NAMES:
+            return ""
+        entries: list[str] = []
+        for harmonic in range(1, 7):
+            expected_hz = frequency_hz * harmonic
+            possible_matches = [
+                peak
+                for frame in frames
+                for peak in frame.peaks
+                if harmonic_error(frequency_hz, peak.frequency_hz, harmonic) <= self.MATCH_TOLERANCE
+            ]
+            peak = max(possible_matches, key=lambda candidate: candidate.relative_percent, default=None)
+            if peak is None or peak.relative_percent < self.WEAK_LOW_ANCHOR_PEAK_PERCENT:
+                entries.append(f"{harmonic}x~{expected_hz:.0f}Hz missing")
+            elif peak.relative_percent < self.MIN_PEAK_PERCENT:
+                entries.append(f"{harmonic}x~{expected_hz:.0f}Hz weak {peak.relative_percent:.0f}%")
+            else:
+                entries.append(f"{harmonic}x~{expected_hz:.0f}Hz present {peak.relative_percent:.0f}%")
+        return f"low-string trace: {', '.join(entries)}"
 
 
 class PluckDetector:
@@ -823,7 +1008,7 @@ def find_fft_peaks(
     samples: np.ndarray,
     sample_rate: int,
     *,
-    count: int = 5,
+    count: int = 10,
     min_hz: float = MIN_HZ,
     max_hz: float = MAX_HZ,
     min_separation_hz: float = 8.0,
@@ -831,6 +1016,7 @@ def find_fft_peaks(
     """Return the strongest separated FFT peaks inside the guitar range.
 
     @author Codex - ported old detector FFT peak extraction into sandbox boundary.
+    @author Codex - preserved more peaks for multi-string open-family diagnostics.
     """
 
     mono = np.asarray(samples, dtype=np.float32).reshape(-1)
