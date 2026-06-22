@@ -798,7 +798,9 @@ class LearnView(QWidget):
         self.back_button = QPushButton("Back")
         self.status_label = QLabel("Choose a MIDI song and target track.")
         self.timeline_overview = MidiOverviewBar()
+        self.timeline_overview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.timeline = PianoRollTimeline()
+        self.timeline.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.practice_view_button = QPushButton("Target")
         self.practice_view_button.setCheckable(True)
         self.practice_view_button.setChecked(True)
@@ -990,10 +992,25 @@ class LearnView(QWidget):
         self.side_stack.addWidget(tracks_panel)
         side_layout.addWidget(self.side_stack, 1)
 
+        overview_panel = QFrame()
+        overview_panel.setObjectName("timelineOverviewPanel")
+        overview_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        overview_layout = QVBoxLayout(overview_panel)
+        overview_layout.setContentsMargins(0, 0, 0, 0)
+        overview_layout.addWidget(self.timeline_overview)
+
+        piano_roll_panel = QFrame()
+        piano_roll_panel.setObjectName("pianoRollPanel")
+        piano_roll_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        piano_roll_layout = QVBoxLayout(piano_roll_panel)
+        piano_roll_layout.setContentsMargins(0, 0, 0, 0)
+        piano_roll_layout.addWidget(self.timeline)
+
         timeline_column = QVBoxLayout()
-        timeline_column.setSpacing(8)
-        timeline_column.addWidget(self.timeline_overview)
-        timeline_column.addWidget(self.timeline, 1)
+        timeline_column.setSpacing(10)
+        timeline_column.setAlignment(Qt.AlignmentFlag.AlignTop)
+        timeline_column.addWidget(overview_panel)
+        timeline_column.addWidget(piano_roll_panel, 1)
 
         middle = QHBoxLayout()
         middle.setSpacing(10)
@@ -1903,10 +1920,13 @@ class LearnView(QWidget):
                 font-size: 24px;
                 font-weight: 800;
             }
-            #panel, #infoPanel, #trackPanel {
+            #panel, #infoPanel, #trackPanel, #timelineOverviewPanel, #pianoRollPanel {
                 background: #141414;
                 border: 1px solid #2a2a2a;
                 border-radius: 8px;
+            }
+            #timelineOverviewPanel, #pianoRollPanel {
+                padding: 0;
             }
             #trackPanel {
                 border: 0;
