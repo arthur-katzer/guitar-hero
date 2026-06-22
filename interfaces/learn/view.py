@@ -759,7 +759,9 @@ class LearnView(QWidget):
 
         self.song_combo = QComboBox()
         self.device_combo = QComboBox()
+        self.device_combo.setObjectName("inputDeviceCombo")
         self.refresh_button = QPushButton("Refresh Devices")
+        self.refresh_button.setObjectName("refreshDevicesButton")
         self.start_button = QPushButton()
         self.start_button.setObjectName("inputToggleButton")
         self.start_button.setAccessibleName("Start input")
@@ -787,7 +789,9 @@ class LearnView(QWidget):
         self.transpose_preview_label = QLabel("Transpose: +0 semitones")
         self.transpose_preview_label.setObjectName("transposePreview")
         self.lowest_note_label = QLabel("Lowest note: --")
+        self.lowest_note_label.setFixedWidth(112)
         self.highest_note_label = QLabel("Highest note: --")
+        self.highest_note_label.setFixedWidth(120)
         self.range_warning_label = QLabel("")
         self.transpose_panel = QFrame()
         self.transpose_panel.setObjectName("transposePanel")
@@ -872,6 +876,7 @@ class LearnView(QWidget):
         @author Codex - replaced visible transpose spinbox with segmented stepper.
         @author Codex - arranged Learn transpose details as explicit note readouts.
         @author Codex - compacted Learn transpose details into one toolbar line.
+        @author Codex - matched Learn input controls layout to Sandbox.
         """
 
         root = QVBoxLayout(self)
@@ -887,19 +892,36 @@ class LearnView(QWidget):
         root.addLayout(top)
 
         controls = QFrame()
-        controls.setObjectName("panel")
-        controls_layout = QGridLayout(controls)
-        controls_layout.setContentsMargins(10, 8, 10, 8)
-        controls_layout.setHorizontalSpacing(6)
-        controls_layout.setVerticalSpacing(6)
-        controls_layout.addWidget(QLabel("Input"), 0, 0)
-        controls_layout.addWidget(self.device_combo, 0, 1, 1, 4)
-        controls_layout.addWidget(self.refresh_button, 0, 5)
-        controls_layout.addWidget(self.start_button, 0, 6)
-        controls_layout.addWidget(self.sample_rate_label, 0, 7, 1, 2)
-        controls_layout.addWidget(QLabel("Song"), 1, 0)
-        controls_layout.addWidget(self.song_combo, 1, 1, 1, 5)
-        controls_layout.addWidget(self.transpose_panel, 1, 6, 1, 4)
+        controls.setObjectName("controlsStack")
+        controls_layout = QVBoxLayout(controls)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(6)
+
+        input_panel = QFrame()
+        input_panel.setObjectName("panel")
+        input_layout = QHBoxLayout(input_panel)
+        input_layout.setContentsMargins(12, 10, 12, 10)
+        input_layout.addWidget(QLabel("Input"))
+        input_layout.addWidget(self.device_combo, 1)
+        input_layout.addWidget(self.refresh_button)
+        input_layout.addWidget(self.start_button)
+        input_layout.addWidget(self.sample_rate_label)
+        controls_layout.addWidget(input_panel)
+
+        song_panel = QFrame()
+        song_panel.setObjectName("panel")
+        song_layout = QHBoxLayout(song_panel)
+        song_layout.setContentsMargins(12, 10, 12, 10)
+        song_layout.setSpacing(6)
+        song_picker = QWidget()
+        song_picker_layout = QHBoxLayout(song_picker)
+        song_picker_layout.setContentsMargins(0, 0, 0, 0)
+        song_picker_layout.setSpacing(6)
+        song_picker_layout.addWidget(QLabel("Song"))
+        song_picker_layout.addWidget(self.song_combo, 1)
+        song_layout.addWidget(song_picker, 1)
+        song_layout.addWidget(self.transpose_panel, 1)
+        controls_layout.addWidget(song_panel)
         root.addWidget(controls)
 
         self.status_label.setObjectName("status")
@@ -1934,6 +1956,9 @@ class LearnView(QWidget):
             }
             QPushButton:hover, QComboBox:hover, QSpinBox:hover {
                 border-color: #ff4d4d;
+            }
+            #inputDeviceCombo, #refreshDevicesButton {
+                padding: 7px 9px;
             }
             QPushButton:checked {
                 background: #2a1b1b;
