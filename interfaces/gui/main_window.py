@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from interfaces.debug_dump import dump
 from interfaces.learn.view import LearnView
+from interfaces.play.view import PlayView
 from interfaces.sandbox.view import SandboxView
 
 
@@ -499,6 +500,7 @@ class MainWindow(QMainWindow):
         self.resize(960, 640)
         self.background = SpectrumBackground()
         self.menu = MainMenu()
+        self.play = PlayView()
         self.learn = LearnView()
         self.sandbox = SandboxView()
         self.screens = QStackedWidget()
@@ -506,11 +508,13 @@ class MainWindow(QMainWindow):
         self.background_layout.setContentsMargins(0, 0, 0, 0)
         self.background_layout.addWidget(self.menu)
         self.screens.addWidget(self.background)
+        self.screens.addWidget(self.play)
         self.screens.addWidget(self.learn)
         self.screens.addWidget(self.sandbox)
         self.setCentralWidget(self.screens)
         self.menu.option_highlighted.connect(self.background.set_active_option)
         self.menu.option_selected.connect(self._open_option)
+        self.play.back_requested.connect(self._show_menu)
         self.learn.back_requested.connect(self._show_menu)
         self.sandbox.back_requested.connect(self._show_menu)
         self.background.set_active_option(MAIN_MENU_OPTIONS[self.menu.current_index()])
@@ -561,22 +565,33 @@ class MainWindow(QMainWindow):
     def _open_option(self, option: str) -> None:
         """Open the selected top-level screen when the use case exists.
 
-        Sandbox and Learn are operational destinations. Play remains a
-        navigation label until its full-speed testing use case is defined.
+        Sandbox, Learn, and the copied Play starter screen are operational
+        destinations. Play intentionally starts as a duplicate so its use case
+        can diverge behind its own module boundary.
 
         @author Codex - wired operational sandbox screen into the main menu.
         @author Codex - wired Learn mode into the main menu shell.
         @author Codex - prevented Learn and Sandbox from sharing live input concurrently.
+        @author Codex - wired the copied Play starter module into the menu shell.
         """
 
+        if option == "Play":
+            dump("main", "open_option", option=option)
+            self.learn.deactivate()
+            self.sandbox.stop_input()
+            self.screens.setCurrentWidget(self.play)
+            self.play.activate()
+            return
         if option == "Learn":
             dump("main", "open_option", option=option)
+            self.play.deactivate()
             self.sandbox.stop_input()
             self.screens.setCurrentWidget(self.learn)
             self.learn.activate()
             return
         if option == "Sandbox":
             dump("main", "open_option", option=option)
+            self.play.deactivate()
             self.learn.deactivate()
             self.screens.setCurrentWidget(self.sandbox)
             if not getattr(self.sandbox, "_running", False):
@@ -590,9 +605,11 @@ class MainWindow(QMainWindow):
         @author Codex - wired operational sandbox screen into the main menu.
         @author Codex - wired Learn mode into the main menu shell.
         @author Codex - stopped active live input when leaving operational screens.
+        @author Codex - stopped Play resources when returning to the main menu.
         """
 
         dump("main", "show_menu")
+        self.play.deactivate()
         self.learn.deactivate()
         self.sandbox.stop_input()
         self.screens.setCurrentWidget(self.background)
