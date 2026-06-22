@@ -24,11 +24,12 @@ from PySide6.QtWidgets import (
 
 from interfaces.debug_dump import dump
 from interfaces.learn.view import LearnView
-from interfaces.play.view import PlayView
 from interfaces.sandbox.view import SandboxView
 
 
 MAIN_MENU_OPTIONS = ("Play", "Learn", "Sandbox")
+DISABLED_MAIN_MENU_OPTIONS = frozenset({"Play"})
+VISIBLE_MAIN_MENU_OPTIONS = tuple(option for option in MAIN_MENU_OPTIONS if option not in DISABLED_MAIN_MENU_OPTIONS)
 MENU_OPTION_COLORS = {
     "Play": "#2ee66b",
     "Learn": "#ff4d4d",
@@ -287,7 +288,7 @@ class MainMenu(QWidget):
         menu_layout.setSpacing(14)
         menu_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
 
-        for index, label in enumerate(MAIN_MENU_OPTIONS):
+        for index, label in enumerate(VISIBLE_MAIN_MENU_OPTIONS):
             button = MainMenuButton(label, MENU_OPTION_COLORS[label])
             button.setCheckable(True)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -400,7 +401,7 @@ class SpectrumBackground(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("spectrumBackground")
-        self._active_color = QColor(MENU_OPTION_COLORS["Play"])
+        self._active_color = QColor(MENU_OPTION_COLORS[VISIBLE_MAIN_MENU_OPTIONS[0]])
         self._phase = 0.0
         self._playhead_seconds = 0.0
         self._audio_path = choose_visualizer_audio_path()
@@ -492,6 +493,7 @@ class MainWindow(QMainWindow):
 
     @author Codex - created the replacement main menu interface.
     @author Codex - wired Learn mode into the main menu shell.
+    @author Codex - disabled Play mode from the current GUI entry points.
     """
 
     def __init__(self, parent: QWidget | None = None):
@@ -500,7 +502,6 @@ class MainWindow(QMainWindow):
         self.resize(960, 640)
         self.background = SpectrumBackground()
         self.menu = MainMenu()
-        self.play = PlayView()
         self.learn = LearnView()
         self.sandbox = SandboxView()
         self.screens = QStackedWidget()
@@ -508,17 +509,15 @@ class MainWindow(QMainWindow):
         self.background_layout.setContentsMargins(0, 0, 0, 0)
         self.background_layout.addWidget(self.menu)
         self.screens.addWidget(self.background)
-        self.screens.addWidget(self.play)
         self.screens.addWidget(self.learn)
         self.screens.addWidget(self.sandbox)
         self.setCentralWidget(self.screens)
         self.menu.option_highlighted.connect(self.background.set_active_option)
         self.menu.option_selected.connect(self._open_option)
-        self.play.back_requested.connect(self._show_menu)
         self.learn.back_requested.connect(self._show_menu)
         self.sandbox.back_requested.connect(self._show_menu)
-        self.background.set_active_option(MAIN_MENU_OPTIONS[self.menu.current_index()])
-        dump("main", "window_ready", initial_option=MAIN_MENU_OPTIONS[self.menu.current_index()])
+        self.background.set_active_option(VISIBLE_MAIN_MENU_OPTIONS[self.menu.current_index()])
+        dump("main", "window_ready", initial_option=VISIBLE_MAIN_MENU_OPTIONS[self.menu.current_index()])
         self.setStyleSheet(
             """
             QMainWindow, QWidget#spectrumBackground {
@@ -565,33 +564,28 @@ class MainWindow(QMainWindow):
     def _open_option(self, option: str) -> None:
         """Open the selected top-level screen when the use case exists.
 
-        Sandbox, Learn, and the copied Play starter screen are operational
-        destinations. Play intentionally starts as a duplicate so its use case
-        can diverge behind its own module boundary.
+        Learn and Sandbox are operational destinations. Play remains in its own
+        module boundary, but this shell currently excludes it from GUI entry
+        points instead of deleting the Play implementation.
 
         @author Codex - wired operational sandbox screen into the main menu.
         @author Codex - wired Learn mode into the main menu shell.
         @author Codex - prevented Learn and Sandbox from sharing live input concurrently.
         @author Codex - wired the copied Play starter module into the menu shell.
+        @author Codex - disabled Play mode from the current GUI entry points.
         """
 
         if option == "Play":
-            dump("main", "open_option", option=option)
-            self.learn.deactivate()
-            self.sandbox.stop_input()
-            self.screens.setCurrentWidget(self.play)
-            self.play.activate()
+            dump("main", "open_option_disabled", option=option)
             return
         if option == "Learn":
             dump("main", "open_option", option=option)
-            self.play.deactivate()
             self.sandbox.stop_input()
             self.screens.setCurrentWidget(self.learn)
             self.learn.activate()
             return
         if option == "Sandbox":
             dump("main", "open_option", option=option)
-            self.play.deactivate()
             self.learn.deactivate()
             self.screens.setCurrentWidget(self.sandbox)
             if not getattr(self.sandbox, "_running", False):
@@ -606,10 +600,10 @@ class MainWindow(QMainWindow):
         @author Codex - wired Learn mode into the main menu shell.
         @author Codex - stopped active live input when leaving operational screens.
         @author Codex - stopped Play resources when returning to the main menu.
+        @author Codex - disabled Play mode from the current GUI entry points.
         """
 
         dump("main", "show_menu")
-        self.play.deactivate()
         self.learn.deactivate()
         self.sandbox.stop_input()
         self.screens.setCurrentWidget(self.background)

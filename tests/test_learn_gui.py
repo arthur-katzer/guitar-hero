@@ -38,6 +38,21 @@ class LearnGuiTests(unittest.TestCase):
 
             window.close()
 
+    def test_main_menu_hides_and_disables_play_mode(self):
+        with patch("interfaces.learn.view.list_input_devices", return_value=[]), patch(
+            "interfaces.sandbox.view.list_input_devices",
+            return_value=[],
+        ):
+            window = MainWindow()
+
+            self.assertEqual([button.text() for button in window.menu.buttons], ["Learn", "Sandbox"])
+            self.assertFalse(hasattr(window, "play"))
+
+            window._open_option("Play")
+
+            self.assertIs(window.screens.currentWidget(), window.background)
+            window.close()
+
     def test_learn_view_uses_piano_roll_and_track_panel_controls(self):
         with patch("interfaces.learn.view.discover_midi_songs", return_value=[]), patch(
             "interfaces.learn.view.demo_song",
