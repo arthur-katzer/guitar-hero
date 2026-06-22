@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from interfaces import theme
 from interfaces.debug_dump import dump
 from interfaces.audio.pitch import (
     AudioDevice,
@@ -136,15 +137,15 @@ class MidiOverviewBar(QWidget):
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor("#0d1118"))
+        painter.fillRect(self.rect(), theme.qcolor(theme.BACKGROUND))
 
         bar_rect = self._bar_rect()
-        painter.setPen(QPen(QColor("#26364a"), 1))
-        painter.setBrush(QColor("#111824"))
+        painter.setPen(QPen(theme.qcolor(theme.BORDER), 1))
+        painter.setBrush(theme.qcolor(theme.TIMELINE_BACKGROUND))
         painter.drawRoundedRect(bar_rect, 6, 6)
 
         if self._song is None or not self._song.tracks:
-            painter.setPen(QColor("#b8c7dc"))
+            painter.setPen(theme.qcolor(theme.TEXT_MUTED))
             painter.drawText(bar_rect, Qt.AlignmentFlag.AlignCenter, "Load a MIDI song to navigate the chart.")
             painter.end()
             return
@@ -153,16 +154,16 @@ class MidiOverviewBar(QWidget):
         start_x = self._time_to_x(self._display_window.start_time)
         end_x = self._time_to_x(self._display_window.end_time)
         selected = QRectF(start_x, bar_rect.top(), max(1.0, end_x - start_x), bar_rect.height())
-        painter.fillRect(selected, QColor(33, 212, 253, 42))
-        painter.setPen(QPen(QColor("#21d4fd"), 2))
+        painter.fillRect(selected, theme.qcolor(theme.ACCENT_SECONDARY, 42))
+        painter.setPen(QPen(theme.qcolor(theme.ACCENT_SECONDARY), 2))
         painter.drawRoundedRect(selected, 4, 4)
 
-        painter.setBrush(QColor("#21d4fd"))
-        painter.setPen(QPen(QColor("#05070a"), 1))
+        painter.setBrush(theme.qcolor(theme.ACCENT_SECONDARY))
+        painter.setPen(QPen(theme.qcolor(theme.BACKGROUND), 1))
         for x in (start_x, end_x):
             painter.drawRoundedRect(QRectF(x - 5, bar_rect.top() - 7, 10, bar_rect.height() + 14), 3, 3)
 
-        painter.setPen(QColor("#91a4bd"))
+        painter.setPen(theme.qcolor(theme.TEXT_DIM))
         painter.drawText(QPoint(int(bar_rect.left()), int(bar_rect.top() - 5)), "MIDI overview")
         painter.drawText(QPoint(int(bar_rect.left()), int(bar_rect.bottom() + 16)), f"{self._song.start_time:.1f}s")
         painter.drawText(QPoint(int(bar_rect.right() - 44), int(bar_rect.bottom() + 16)), f"{self._song.end_time:.1f}s")
@@ -305,8 +306,7 @@ class MidiOverviewBar(QWidget):
         lane_height = rect.height() / lane_count
         for lane_index, track in enumerate(self._song.tracks):
             y = rect.top() + lane_index * lane_height
-            color = QColor(track.color)
-            color.setAlpha(150)
+            color = theme.qcolor(track.color, 150)
             painter.setBrush(color)
             painter.setPen(Qt.PenStyle.NoPen)
             for note in track.notes:
@@ -466,15 +466,15 @@ class PianoRollTimeline(QWidget):
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor("#0d1118"))
+        painter.fillRect(self.rect(), theme.qcolor(theme.BACKGROUND))
 
         roll_rect = self._roll_rect()
-        painter.fillRect(roll_rect, QColor("#111824"))
-        painter.setPen(QPen(QColor("#26364a"), 1))
+        painter.fillRect(roll_rect, theme.qcolor(theme.TIMELINE_BACKGROUND))
+        painter.setPen(QPen(theme.qcolor(theme.BORDER), 1))
         painter.drawRoundedRect(roll_rect, 6, 6)
 
         if self._song is None or not self._song.tracks:
-            painter.setPen(QColor("#b8c7dc"))
+            painter.setPen(theme.qcolor(theme.TEXT_MUTED))
             painter.drawText(roll_rect, Qt.AlignmentFlag.AlignCenter, "Load a MIDI song to inspect its tracks.")
             painter.end()
             return
@@ -629,10 +629,10 @@ class PianoRollTimeline(QWidget):
         for note in range(min_note, max_note + 1):
             y = self._note_to_y(note, rect)
             is_octave_c = note % 12 == 0
-            painter.setPen(QPen(QColor("#26364a" if is_octave_c else "#1d2a3a"), 1))
+            painter.setPen(QPen(theme.qcolor(theme.BORDER, 132 if is_octave_c else 72), 1))
             painter.drawLine(int(rect.left()), int(y), int(rect.right()), int(y))
             if is_octave_c or lane_height >= 13:
-                painter.setPen(QColor("#7f8da3"))
+                painter.setPen(theme.qcolor(theme.TEXT_DIM))
                 painter.drawText(QPoint(8, int(y + max(10, lane_height * 0.75))), midi_note_name(note))
 
     def _paint_time_grid(self, painter: QPainter, rect: QRectF) -> None:
@@ -648,23 +648,23 @@ class PianoRollTimeline(QWidget):
         if marks:
             for mark in marks:
                 x = self._time_to_x(mark.start_time)
-                painter.setPen(QPen(QColor("#334761"), 1))
+                painter.setPen(QPen(theme.qcolor(theme.ACCENT_PRIMARY, 90), 1))
                 painter.drawLine(int(x), int(rect.top()), int(x), int(rect.bottom()))
-                painter.setPen(QColor("#91a4bd"))
+                painter.setPen(theme.qcolor(theme.TEXT_DIM))
                 painter.drawText(QPoint(int(x + 4), int(rect.top() - 8)), mark.label)
             return
 
         duration = max(end_time - start_time, 0.001)
         tick_count = max(4, min(12, int(rect.width() // 90)))
-        painter.setPen(QPen(QColor("#25344a"), 1))
+        painter.setPen(QPen(theme.qcolor(theme.BORDER, 80), 1))
         for index in range(tick_count + 1):
             ratio = index / tick_count
             x = rect.left() + ratio * rect.width()
             seconds = start_time + ratio * duration
             painter.drawLine(int(x), int(rect.top()), int(x), int(rect.bottom()))
-            painter.setPen(QColor("#7f8da3"))
+            painter.setPen(theme.qcolor(theme.TEXT_DIM))
             painter.drawText(QPoint(int(x + 4), int(rect.bottom() + 18)), f"{seconds:.1f}s")
-            painter.setPen(QPen(QColor("#25344a"), 1))
+            painter.setPen(QPen(theme.qcolor(theme.BORDER, 80), 1))
 
     def _paint_notes(self, painter: QPainter, rect: QRectF) -> None:
         """Paint visible MIDI note spans as colored piano-roll rectangles.
@@ -680,7 +680,7 @@ class PianoRollTimeline(QWidget):
         for track in self._song.tracks:
             if track.index not in self._visible_track_indexes:
                 continue
-            base_color = QColor(track.color)
+            base_color = theme.qcolor(track.color)
             is_target_track = track.index == self._target_track_index
             for note in track.notes:
                 if note.end_time < visible_start or note.start_time > visible_end:
@@ -700,7 +700,7 @@ class PianoRollTimeline(QWidget):
                 color = QColor(base_color)
                 color.setAlpha(235 if is_target_track else 150)
                 painter.setBrush(color)
-                painter.setPen(QPen(QColor("#05070a"), 1))
+                painter.setPen(QPen(theme.qcolor(theme.BACKGROUND), 1))
                 painter.drawRoundedRect(block, 2, 2)
 
     def _display_note_for_track(self, track_index: int, midi_note: int) -> int:
@@ -722,11 +722,11 @@ class PianoRollTimeline(QWidget):
         start_x = self._time_to_x(self._region.start_time)
         end_x = self._time_to_x(self._region.end_time)
         selected = QRectF(start_x, rect.top(), max(1.0, end_x - start_x), rect.height())
-        painter.fillRect(selected, QColor(255, 77, 77, 32))
-        painter.setPen(QPen(QColor("#ff4d4d"), 3))
+        painter.fillRect(selected, theme.qcolor(theme.TIMELINE_SELECTED_REGION, 32))
+        painter.setPen(QPen(theme.qcolor(theme.TIMELINE_SELECTED_REGION), 3))
         painter.drawLine(int(start_x), int(rect.top()), int(start_x), int(rect.bottom()))
         painter.drawLine(int(end_x), int(rect.top()), int(end_x), int(rect.bottom()))
-        painter.setBrush(QColor("#ff4d4d"))
+        painter.setBrush(theme.qcolor(theme.TIMELINE_SELECTED_REGION))
         for x in (start_x, end_x):
             painter.drawRoundedRect(QRectF(x - 5, rect.top() - 10, 10, 20), 3, 3)
 
@@ -743,10 +743,10 @@ class PianoRollTimeline(QWidget):
         if self._playhead_time < start_time or self._playhead_time > end_time:
             return
         x = self._time_to_x(self._playhead_time)
-        painter.setPen(QPen(QColor("#ffffff"), 2))
+        painter.setPen(QPen(theme.qcolor(theme.PLAYHEAD), 2))
         painter.drawLine(int(x), int(rect.top() - 10), int(x), int(rect.bottom() + 10))
-        painter.setBrush(QColor("#ffffff"))
-        painter.setPen(QPen(QColor("#05070a"), 1))
+        painter.setBrush(theme.qcolor(theme.PLAYHEAD))
+        painter.setPen(QPen(theme.qcolor(theme.BACKGROUND), 1))
         painter.drawRoundedRect(QRectF(x - 5, rect.top() - 14, 10, 12), 3, 3)
 
 class LearnView(QWidget):
@@ -1060,7 +1060,7 @@ class LearnView(QWidget):
         self.range_warning_label.setWordWrap(True)
         self.detected_label.setObjectName("monoText")
         self.detected_label.setWordWrap(True)
-        self.feedback_label.setObjectName("feedback")
+        self.feedback_label.setObjectName("practiceStatus")
         self.feedback_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
     def _info_panel(self, title: str) -> QFrame:
@@ -1411,7 +1411,7 @@ class LearnView(QWidget):
         swatch = QLabel()
         swatch.setObjectName("trackSwatch")
         swatch.setFixedSize(14, 14)
-        swatch.setStyleSheet(f"background: {track.color}; border-radius: 3px;")
+        swatch.setStyleSheet(theme.track_swatch_qss(track.color))
         target_radio = QRadioButton("Target")
         target_radio.toggled.connect(lambda checked, index=track.index: checked and self._select_target_track(index))
         self.target_group.addButton(target_radio)
@@ -1926,12 +1926,12 @@ class LearnView(QWidget):
         """
 
         color = {
-            Feedback.WAITING: "#ffd43b",
-            Feedback.MISS: "#ff4d4d",
-            Feedback.GOOD: "#3ddc84",
-            Feedback.PERFECT: "#21d4fd",
-        }.get(feedback, "#f5f5f5")
-        self.feedback_label.setStyleSheet(f"color: {color};")
+            Feedback.WAITING: theme.WARNING,
+            Feedback.MISS: theme.ERROR,
+            Feedback.GOOD: theme.SUCCESS,
+            Feedback.PERFECT: theme.ACCENT_SECONDARY,
+        }.get(feedback, theme.TEXT_PRIMARY)
+        self.feedback_label.setStyleSheet(f"color: {theme.css_color(color)};")
 
     def _go_back(self) -> None:
         """Leave Learn and release its resources.
@@ -1954,166 +1954,112 @@ class LearnView(QWidget):
         """
 
         self.setStyleSheet(
-            """
-            QWidget {
-                background: #0b0b0b;
-                color: #f5f5f5;
-                font-family: Inter, Segoe UI, Arial, sans-serif;
-                font-size: 13px;
-            }
-            #title {
-                color: #ff4d4d;
-                font-size: 24px;
-                font-weight: 800;
-            }
-            #panel, #infoPanel, #trackPanel, #timelineOverviewPanel, #pianoRollPanel {
-                background: #141414;
-                border: 1px solid #2a2a2a;
+            theme.screen_base_qss(theme.ACCENT_PRIMARY, theme.ACCENT_PRIMARY, control_padding="5px 8px")
+            + f"""
+            #panel, #infoPanel, #trackPanel, #timelineOverviewPanel, #pianoRollPanel {{
+                background: {theme.PANEL};
+                border: 1px solid {theme.BORDER};
                 border-radius: 8px;
-            }
-            #timelineOverviewPanel, #pianoRollPanel {
+            }}
+            #timelineOverviewPanel, #pianoRollPanel {{
                 padding: 0;
-            }
-            #trackPanel {
+            }}
+            #trackPanel {{
                 border: 0;
-            }
-            #transposePanel {
-                background: #181818;
-                border: 1px solid #303030;
+            }}
+            #transposePanel {{
+                background: {theme.PANEL_ALT};
+                border: 1px solid {theme.BORDER};
                 border-radius: 8px;
-            }
-            #transposeTitle {
+            }}
+            #transposeTitle {{
                 background: transparent;
-                color: #b8b8b8;
+                color: {theme.css_color(theme.TEXT_MUTED)};
                 font-weight: 800;
-            }
-            #transposePreview {
+            }}
+            #transposePreview {{
                 background: transparent;
-                color: #d8e2ef;
+                color: {theme.css_color(theme.TEXT_SECONDARY)};
                 font-family: JetBrains Mono, Consolas, monospace;
                 font-size: 14px;
-            }
-            #trackRow {
-                background: #181818;
-                border: 1px solid #303030;
+            }}
+            #trackRow {{
+                background: {theme.PANEL_ALT};
+                border: 1px solid {theme.BORDER};
                 border-radius: 8px;
-            }
-            #trackName {
-                color: #f5f5f5;
+            }}
+            #trackName {{
+                color: {theme.TEXT_PRIMARY};
                 font-weight: 800;
-            }
-            #trackDetails {
-                color: #9fb0c5;
+            }}
+            #trackDetails {{
+                color: {theme.css_color(theme.TEXT_MUTED)};
                 font-size: 12px;
-            }
-            #sectionTitle {
-                color: #b8b8b8;
-                font-weight: 800;
-            }
-            #status {
-                color: #b8c7dc;
-            }
-            QPushButton, QComboBox, QSpinBox {
-                background: #181818;
-                border: 1px solid #333333;
-                border-radius: 6px;
-                color: #f5f5f5;
-                padding: 5px 8px;
-            }
-            QPushButton:hover, QComboBox:hover, QSpinBox:hover {
-                border-color: #ff4d4d;
-            }
-            #inputDeviceCombo, #refreshDevicesButton {
+            }}
+            #inputDeviceCombo, #refreshDevicesButton {{
                 padding: 7px 9px;
-            }
-            QPushButton:checked {
-                background: #2a1b1b;
-                border-color: #ff4d4d;
-            }
-            #inputToggleButton {
-                min-width: 34px;
-                max-width: 34px;
-                min-height: 34px;
-                max-height: 34px;
-                border-radius: 17px;
-                padding: 0;
-                background: #ff3b30;
-                border: 0;
-            }
-            #inputToggleButton:hover {
-                background: #ff5a52;
-                border: 0;
-            }
-            #inputToggleButton[inputState="running"] {
-                border-radius: 4px;
-                background: #f5f5f5;
-                border: 0;
-            }
-            #inputToggleButton[inputState="running"]:hover {
-                background: #ffffff;
-                border: 0;
-            }
-            #transposeStepDown, #transposeStepUp {
+            }}
+            #transposeStepDown, #transposeStepUp {{
                 min-width: 38px;
                 max-width: 38px;
                 min-height: 36px;
                 max-height: 36px;
                 border-radius: 7px;
                 padding: 0;
-                background: #1f1f1f;
-                border: 1px solid #333333;
-                color: #ffffff;
+                background: {theme.PANEL_DEEP};
+                border: 1px solid {theme.BORDER};
+                color: {theme.TEXT_PRIMARY};
                 font-size: 21px;
                 font-weight: 900;
                 text-align: center;
-            }
-            #transposeStepDown:hover, #transposeStepUp:hover {
-                background: #ff3b30;
-                border-color: #ff3b30;
-            }
-            #transposeValue {
+            }}
+            #transposeStepDown:hover, #transposeStepUp:hover {{
+                background: {theme.ERROR};
+                border-color: {theme.ERROR};
+            }}
+            #transposeValue {{
                 min-width: 62px;
                 max-width: 62px;
                 min-height: 36px;
                 max-height: 36px;
-                background: #121212;
-                border: 1px solid #333333;
+                background: {theme.PANEL_DEEP};
+                border: 1px solid {theme.BORDER};
                 border-radius: 7px;
-                color: #21d4fd;
+                color: {theme.ACCENT_SECONDARY};
                 font-family: JetBrains Mono, Consolas, monospace;
                 font-size: 14px;
                 font-weight: 900;
-            }
-            QCheckBox, QRadioButton {
+            }}
+            QCheckBox, QRadioButton {{
                 spacing: 6px;
-            }
-            #targetName {
-                color: #21d4fd;
+            }}
+            #targetName {{
+                color: {theme.ACCENT_SECONDARY};
                 font-size: 36px;
                 font-weight: 900;
-            }
-            #feedback {
+            }}
+            #practiceStatus {{
                 font-size: 44px;
                 font-weight: 900;
-                background: #080b10;
-                border: 1px solid #25344a;
+                background: {theme.PANEL_DEEP};
+                border: 1px solid {theme.BORDER};
                 border-radius: 8px;
                 padding: 14px;
-            }
-            #monoText {
-                color: #d8e2ef;
+            }}
+            #monoText {{
+                color: {theme.css_color(theme.TEXT_SECONDARY)};
                 font-family: JetBrains Mono, Consolas, monospace;
                 font-size: 14px;
-            }
-            #rangeText {
+            }}
+            #rangeText {{
                 background: transparent;
-                color: #b8c7dc;
+                color: {theme.css_color(theme.TEXT_MUTED)};
                 font-size: 12px;
-            }
-            #rangeText[rangeState="warning"] {
-                color: #ff4d4d;
+            }}
+            #rangeText[rangeState="warning"] {{
+                color: {theme.ERROR};
                 font-weight: 800;
-            }
+            }}
             """
         )
 def _peak_dump(peak: SpectrumPeak | None) -> dict[str, object] | None:

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QEvent, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QLinearGradient, QPainter
+from PySide6.QtGui import QLinearGradient, QPainter
 from PySide6.QtWidgets import (
     QButtonGroup,
     QGraphicsDropShadowEffect,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from interfaces.debug_dump import dump
+from interfaces import theme
 from interfaces.learn.view import LearnView
 from interfaces.sandbox.view import SandboxView
 
@@ -31,9 +32,9 @@ MAIN_MENU_OPTIONS = ("Play", "Learn", "Sandbox")
 DISABLED_MAIN_MENU_OPTIONS = frozenset({"Play"})
 VISIBLE_MAIN_MENU_OPTIONS = tuple(option for option in MAIN_MENU_OPTIONS if option not in DISABLED_MAIN_MENU_OPTIONS)
 MENU_OPTION_COLORS = {
-    "Play": "#2ee66b",
-    "Learn": "#ff4d4d",
-    "Sandbox": "#ffd43b",
+    "Play": theme.SUCCESS,
+    "Learn": theme.ACCENT_PRIMARY,
+    "Sandbox": theme.WARNING,
 }
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VISUALIZER_MP3_PATH = PROJECT_ROOT / "assets" / "visualizer" / "on-my-knees.mp3"
@@ -230,11 +231,11 @@ class MainMenuButton(QPushButton):
 
     def __init__(self, label: str, active_color: str, parent: QWidget | None = None):
         super().__init__(label, parent)
-        self._active_color = QColor(active_color)
+        self._active_color = active_color
         self._glow = QGraphicsDropShadowEffect(self)
         self._glow.setBlurRadius(34)
         self._glow.setOffset(0, 0)
-        self._glow.setColor(self._with_alpha(self._active_color, 230))
+        self._glow.setColor(theme.qcolor(self._active_color, 230))
         self.setGraphicsEffect(self._glow)
         self.toggled.connect(lambda checked: self.sync_highlight())
         self.sync_highlight()
@@ -246,19 +247,9 @@ class MainMenuButton(QPushButton):
         """
 
         active = self.isChecked() or self.underMouse() or self.hasFocus()
-        text_color = self._active_color.name() if active else "#ffffff"
+        text_color = self._active_color if active else theme.TEXT_PRIMARY
         self.setStyleSheet(f"color: {text_color};")
         self._glow.setEnabled(active)
-
-    def _with_alpha(self, color: QColor, alpha: int) -> QColor:
-        """Return a copy of ``color`` with the requested alpha channel.
-
-        @author Codex - added lane-colored glow highlight to main menu options.
-        """
-
-        copy = QColor(color)
-        copy.setAlpha(alpha)
-        return copy
 
 
 class MainMenu(QWidget):
@@ -401,7 +392,7 @@ class SpectrumBackground(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("spectrumBackground")
-        self._active_color = QColor(MENU_OPTION_COLORS[VISIBLE_MAIN_MENU_OPTIONS[0]])
+        self._active_color = MENU_OPTION_COLORS[VISIBLE_MAIN_MENU_OPTIONS[0]]
         self._phase = 0.0
         self._playhead_seconds = 0.0
         self._audio_path = choose_visualizer_audio_path()
@@ -420,7 +411,7 @@ class SpectrumBackground(QWidget):
         color = MENU_OPTION_COLORS.get(option)
         if color is None:
             return
-        self._active_color = QColor(color)
+        self._active_color = color
         self.update()
 
     def _advance_animation(self) -> None:
@@ -441,7 +432,7 @@ class SpectrumBackground(QWidget):
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor("#0b0b0b"))
+        painter.fillRect(self.rect(), theme.qcolor(theme.BACKGROUND))
 
         width = max(self.width(), 1)
         height = max(self.height(), 1)
@@ -462,9 +453,9 @@ class SpectrumBackground(QWidget):
             x = gap + index * (bar_width + gap)
             y = baseline - bar_height
 
-            top_color = self._with_alpha(self._active_color.lighter(135), 128)
-            mid_color = self._with_alpha(self._active_color, 82)
-            bottom_color = self._with_alpha(self._active_color.darker(170), 18)
+            top_color = theme.qcolor(self._active_color, 136)
+            mid_color = theme.qcolor(theme.ACCENT_PRIMARY, 82)
+            bottom_color = theme.qcolor(theme.PANEL_DEEP, 18)
 
             gradient = QLinearGradient(0, y, 0, baseline)
             gradient.setColorAt(0.0, top_color)
@@ -475,17 +466,7 @@ class SpectrumBackground(QWidget):
             painter.setBrush(gradient)
             painter.drawRoundedRect(QRectF(x, y, bar_width, bar_height), 4, 4)
 
-        painter.fillRect(self.rect(), QColor(0, 0, 0, 150))
-
-    def _with_alpha(self, color: QColor, alpha: int) -> QColor:
-        """Return a copy of ``color`` with the requested alpha channel.
-
-        @author Codex - added option-colored spectrum background to the main menu.
-        """
-
-        copy = QColor(color)
-        copy.setAlpha(alpha)
-        return copy
+        painter.fillRect(self.rect(), theme.qcolor(theme.BACKGROUND, 150))
 
 
 class MainWindow(QMainWindow):
@@ -519,45 +500,45 @@ class MainWindow(QMainWindow):
         self.background.set_active_option(VISIBLE_MAIN_MENU_OPTIONS[self.menu.current_index()])
         dump("main", "window_ready", initial_option=VISIBLE_MAIN_MENU_OPTIONS[self.menu.current_index()])
         self.setStyleSheet(
-            """
-            QMainWindow, QWidget#spectrumBackground {
-                background: #111111;
-                color: #f5f5f5;
-            }
+            f"""
+            QMainWindow, QWidget#spectrumBackground {{
+                background: {theme.BACKGROUND};
+                color: {theme.TEXT_PRIMARY};
+            }}
 
-            QWidget#mainMenu {
+            QWidget#mainMenu {{
                 background: transparent;
-                color: #f5f5f5;
-            }
+                color: {theme.TEXT_PRIMARY};
+            }}
 
-            QWidget#mainMenuOptions {
+            QWidget#mainMenuOptions {{
                 background: transparent;
-            }
+            }}
 
-            QPushButton {
+            QPushButton {{
                 background: transparent;
                 border: 0;
                 border-radius: 6px;
-                color: #ffffff;
+                color: {theme.TEXT_PRIMARY};
                 font-size: 24px;
                 font-weight: 650;
                 letter-spacing: 0;
                 outline: 0;
                 padding: 10px 18px;
                 text-align: left;
-            }
+            }}
 
             QPushButton:hover,
             QPushButton:focus,
-            QPushButton:checked {
+            QPushButton:checked {{
                 background: transparent;
                 border: 0;
                 outline: 0;
-            }
+            }}
 
-            QPushButton:pressed {
+            QPushButton:pressed {{
                 background: transparent;
-            }
+            }}
             """
         )
 

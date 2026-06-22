@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from interfaces import theme
 from interfaces.debug_dump import dump
 from interfaces.sandbox.audio_pitch import (
     AudioDevice,
@@ -51,19 +52,31 @@ class SpectrumChart(pg.PlotWidget):
         self._smoothed_magnitudes = None
         self._last_marker_update_at = 0.0
         self.setMinimumHeight(460)
-        self.setBackground("#10151f")
+        self.setBackground(theme.qcolor(theme.BACKGROUND))
         self.showGrid(x=True, y=True, alpha=0.18)
         self.setLabel("left", "Relative magnitude")
         self.setLabel("bottom", "Frequency", units="Hz")
+        for axis_name in ("left", "bottom"):
+            axis = self.getPlotItem().getAxis(axis_name)
+            axis.setPen(pg.mkPen(theme.qcolor(theme.BORDER)))
+            axis.setTextPen(pg.mkPen(theme.qcolor(theme.TEXT_MUTED)))
         self.setXRange(60, 1200, padding=0)
         self.setYRange(0, 1.0, padding=0)
-        self.curve = self.plot(pen=pg.mkPen("#9bff7a", width=2))
-        self.dominant_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#ffb02e", width=2))
-        self.fundamental_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#21d4fd", width=2))
+        self.curve = self.plot(pen=pg.mkPen(theme.qcolor(theme.SPECTRUM_BAR), width=2))
+        self.dominant_line = pg.InfiniteLine(
+            angle=90,
+            movable=False,
+            pen=pg.mkPen(theme.qcolor(theme.SPECTRUM_DOMINANT), width=2),
+        )
+        self.fundamental_line = pg.InfiniteLine(
+            angle=90,
+            movable=False,
+            pen=pg.mkPen(theme.qcolor(theme.ACCENT_SECONDARY), width=2),
+        )
         self.addItem(self.dominant_line)
         self.addItem(self.fundamental_line)
-        self.dominant_text = pg.TextItem(color="#ffb02e", anchor=(0, 1))
-        self.fundamental_text = pg.TextItem(color="#21d4fd", anchor=(0, 1))
+        self.dominant_text = pg.TextItem(color=theme.SPECTRUM_DOMINANT, anchor=(0, 1))
+        self.fundamental_text = pg.TextItem(color=theme.ACCENT_SECONDARY, anchor=(0, 1))
         self.addItem(self.dominant_text)
         self.addItem(self.fundamental_text)
 
@@ -174,11 +187,20 @@ class TopPeaksPanel(QFrame):
                 f"MIDI {peak.midi:3d} | {peak.relative_percent:5.0f}%"
             )
             if role == "detected":
-                row = f"<span style='color:#21d4fd; font-weight:900;'>{row}  &lt; detected note</span>"
+                row = (
+                    f"<span style='color:{theme.ACCENT_SECONDARY}; font-weight:900;'>"
+                    f"{row}  &lt; detected note</span>"
+                )
             elif role.startswith("harmonic"):
-                row = f"<span style='color:#9bff7a; font-weight:800;'>{row}  &lt; {role}</span>"
+                row = (
+                    f"<span style='color:{theme.SPECTRUM_HARMONIC}; font-weight:800;'>"
+                    f"{row}  &lt; {role}</span>"
+                )
             elif index == 1:
-                row = f"<span style='color:#ffb02e; font-weight:800;'>{row}  &lt; live dominant</span>"
+                row = (
+                    f"<span style='color:{theme.SPECTRUM_DOMINANT}; font-weight:800;'>"
+                    f"{row}  &lt; live dominant</span>"
+                )
             lines.append(row)
         lines.append("</pre>")
         self.text.setHtml("\n".join(lines))
@@ -329,24 +351,12 @@ class OpenStringFamiliesPanel(QFrame):
 
     def _set_bar_status(self, bar: QProgressBar, status: str) -> None:
         color = {
-            "active": "#3ddc84",
-            "uncertain": "#ffd43b",
-            "harmonic overlap": "#21d4fd",
-            "inactive": "#5f6875",
-        }.get(status, "#5f6875")
-        bar.setStyleSheet(
-            f"""
-            QProgressBar {{
-                background: #080b10;
-                border: 1px solid #25344a;
-                border-radius: 6px;
-            }}
-            QProgressBar::chunk {{
-                background: {color};
-                border-radius: 5px;
-            }}
-            """
-        )
+            "active": theme.SUCCESS,
+            "uncertain": theme.WARNING,
+            "harmonic overlap": theme.ACCENT_SECONDARY,
+            "inactive": theme.INACTIVE,
+        }.get(status, theme.INACTIVE)
+        bar.setStyleSheet(theme.progress_bar_qss(color))
 
 
 class SandboxView(QWidget):
@@ -614,106 +624,51 @@ class SandboxView(QWidget):
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
-            """
-            QWidget {
-                background: #0b0b0b;
-                color: #f5f5f5;
-                font-family: Inter, Segoe UI, Arial, sans-serif;
-                font-size: 13px;
-            }
-            #title {
-                color: #ffd43b;
-                font-size: 24px;
-                font-weight: 800;
-            }
-            #panel {
-                background: #141414;
-                border: 1px solid #2a2a2a;
+            theme.screen_base_qss(theme.WARNING, theme.WARNING, control_padding="7px 9px")
+            + f"""
+            #peaksPanel {{
+                background: {theme.PANEL};
+                border: 1px solid {theme.BORDER};
                 border-radius: 8px;
-            }
-            #sectionTitle {
-                color: #b8b8b8;
-                font-weight: 800;
-            }
-            #status {
-                color: #b8c7dc;
-            }
-            QPushButton, QComboBox, QTextEdit {
-                background: #181818;
-                border: 1px solid #333333;
+            }}
+            #peaksText {{
+                background: {theme.PANEL_DEEP};
+                border: 1px solid {theme.BORDER};
                 border-radius: 6px;
-                color: #f5f5f5;
-                padding: 7px 9px;
-            }
-            QPushButton:hover {
-                border-color: #ffd43b;
-            }
-            #inputToggleButton {
-                min-width: 34px;
-                max-width: 34px;
-                min-height: 34px;
-                max-height: 34px;
-                border-radius: 17px;
-                padding: 0;
-                background: #ff3b30;
-                border: 0;
-            }
-            #inputToggleButton:hover {
-                background: #ff5a52;
-                border: 0;
-            }
-            #inputToggleButton[inputState="running"] {
-                border-radius: 4px;
-                background: #f5f5f5;
-                border: 0;
-            }
-            #inputToggleButton[inputState="running"]:hover {
-                background: #ffffff;
-                border: 0;
-            }
-            #peaksPanel {
-                background: #111824;
-                border: 1px solid #243043;
-                border-radius: 8px;
-            }
-            #peaksText {
-                background: #080b10;
-                border: 1px solid #25344a;
-                border-radius: 6px;
-                color: #d8e2ef;
+                color: {theme.css_color(theme.TEXT_SECONDARY)};
                 font-family: JetBrains Mono, Consolas, monospace;
                 font-size: 12px;
-            }
-            #lastPluckPanel {
-                background: #111824;
-                border: 1px solid #243043;
+            }}
+            #lastPluckPanel {{
+                background: {theme.PANEL};
+                border: 1px solid {theme.BORDER};
                 border-radius: 8px;
-            }
-            #openStringsPanel {
-                background: #111824;
-                border: 1px solid #243043;
+            }}
+            #openStringsPanel {{
+                background: {theme.PANEL};
+                border: 1px solid {theme.BORDER};
                 border-radius: 8px;
-            }
-            #openStringName {
-                color: #d8e2ef;
+            }}
+            #openStringName {{
+                color: {theme.css_color(theme.TEXT_SECONDARY)};
                 font-family: JetBrains Mono, Consolas, monospace;
                 font-weight: 800;
                 min-width: 32px;
-            }
-            #openStringDetail {
-                color: #b8c7dc;
+            }}
+            #openStringDetail {{
+                color: {theme.css_color(theme.TEXT_MUTED)};
                 font-family: JetBrains Mono, Consolas, monospace;
                 font-size: 12px;
-            }
-            #lastPluckNote {
-                color: #21d4fd;
+            }}
+            #lastPluckNote {{
+                color: {theme.ACCENT_SECONDARY};
                 font-size: 42px;
                 font-weight: 900;
-            }
-            #lastPluckDetail {
-                color: #b8c7dc;
+            }}
+            #lastPluckDetail {{
+                color: {theme.css_color(theme.TEXT_MUTED)};
                 font-size: 14px;
-            }
+            }}
             """
         )
 

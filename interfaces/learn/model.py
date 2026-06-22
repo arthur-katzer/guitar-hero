@@ -12,6 +12,8 @@ from enum import Enum
 import math
 from pathlib import Path
 
+from interfaces import theme
+
 
 class Feedback(str, Enum):
     """User-facing target feedback states for Learn mode.
@@ -225,6 +227,7 @@ class MidiTrackOption:
     @author Codex - created Learn MIDI track option model.
     @author Codex - added piano-roll track metadata.
     @author Codex - removed Learn Run Mode playback controls.
+    @author Codex - moved default track display color to the shared SynthWave theme.
     """
 
     index: int
@@ -232,7 +235,7 @@ class MidiTrackOption:
     channel_labels: tuple[str, ...]
     section: LearnSection
     notes: tuple[MidiNoteSpan, ...] = ()
-    color: str = "#21d4fd"
+    color: str = theme.TRACK_COLORS[0]
     instrument_labels: tuple[str, ...] = ()
 
     @property

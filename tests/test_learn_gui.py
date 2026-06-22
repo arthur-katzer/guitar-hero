@@ -7,6 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
+from interfaces import theme
 from interfaces.audio.pitch import AudioDevice
 from interfaces.gui.main_window import MainWindow
 from interfaces.learn.midi_targets import MidiNoteEvent, group_note_events, section_from_targets
@@ -416,7 +417,7 @@ class LearnGuiTests(unittest.TestCase):
                     channel_labels=("1",),
                     section=target_section,
                     notes=(MidiNoteSpan(0.0, 0.5, 40, 1.0, 0),),
-                    color="#21d4fd",
+                    color=theme.TRACK_COLORS[0],
                 ),
                 MidiTrackOption(
                     index=2,
@@ -424,7 +425,7 @@ class LearnGuiTests(unittest.TestCase):
                     channel_labels=("2",),
                     section=context_section,
                     notes=(MidiNoteSpan(0.0, 1.0, 45, 1.0, 1),),
-                    color="#ff4d4d",
+                    color=theme.TRACK_COLORS[1],
                 ),
             ],
         )
@@ -442,7 +443,7 @@ class LearnGuiTests(unittest.TestCase):
                     channel_labels=("1",),
                     section=target_section,
                     notes=(MidiNoteSpan(0.0, 0.5, 38, 1.0, 0),),
-                    color="#21d4fd",
+                    color=theme.TRACK_COLORS[0],
                 ),
             ],
         )
@@ -466,7 +467,7 @@ class LearnGuiTests(unittest.TestCase):
                         MidiNoteSpan(0.0, 0.5, 40, 1.0, 0),
                         MidiNoteSpan(5.5, 6.0, 45, 1.0, 0),
                     ),
-                    color="#21d4fd",
+                    color=theme.TRACK_COLORS[0],
                 ),
             ],
         )
@@ -486,7 +487,7 @@ class LearnGuiTests(unittest.TestCase):
                     channel_labels=("1",),
                     section=piano_section,
                     notes=(MidiNoteSpan(0.0, 0.5, 60, 1.0, 0),),
-                    color="#21d4fd",
+                    color=theme.TRACK_COLORS[0],
                 ),
                 MidiTrackOption(
                     index=2,
@@ -494,7 +495,7 @@ class LearnGuiTests(unittest.TestCase):
                     channel_labels=("2",),
                     section=guitar_section,
                     notes=(MidiNoteSpan(0.0, 0.5, 45, 1.0, 1),),
-                    color="#ff4d4d",
+                    color=theme.TRACK_COLORS[1],
                 ),
             ],
         )

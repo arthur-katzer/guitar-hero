@@ -4,6 +4,7 @@ from pathlib import Path
 
 import mido
 
+from interfaces import theme
 from interfaces.learn.midi_targets import (
     MidiNoteEvent,
     discover_midi_songs,
@@ -93,7 +94,7 @@ class LearnMidiTargetTests(unittest.TestCase):
         self.assertEqual(song.tracks[0].notes[0].midi_note, 40)
         self.assertAlmostEqual(song.tracks[0].notes[0].start_time, 0.0)
         self.assertAlmostEqual(song.tracks[0].notes[0].end_time, 0.5)
-        self.assertEqual(song.tracks[0].color, "#21d4fd")
+        self.assertEqual(song.tracks[0].color, theme.TRACK_COLORS[0])
         self.assertEqual(song.tracks[0].instrument_labels, ("Program 25",))
         self.assertEqual(song.measure_marks[0].label, "1")
         self.assertAlmostEqual(song.measure_marks[0].start_time, 0.0)

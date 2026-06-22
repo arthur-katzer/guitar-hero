@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from interfaces import theme
 from interfaces.learn.model import (
     LearnSection,
     LearnSong,
@@ -25,16 +26,7 @@ DEFAULT_GROUPING_TOLERANCE_SECONDS = 0.050
 DEMO_NOTE_MIDIS = (40, 45, 50, 55, 59, 64)
 NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 PERCUSSION_CHANNEL = 9
-TRACK_COLORS = (
-    "#21d4fd",
-    "#ff4d4d",
-    "#3ddc84",
-    "#ffd43b",
-    "#b197fc",
-    "#ff922b",
-    "#66d9e8",
-    "#f06595",
-)
+TRACK_COLORS = theme.TRACK_COLORS
 
 
 @dataclass(frozen=True)
