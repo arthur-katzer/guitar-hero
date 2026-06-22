@@ -106,8 +106,47 @@ class LearnGuiTests(unittest.TestCase):
         self.assertFalse(hasattr(view, "count_in_combo"))
         self.assertFalse(hasattr(view, "loop_check"))
         self.assertFalse(hasattr(view, "playhead_bar"))
-        self.assertFalse(hasattr(view, "restart_button"))
+        self.assertTrue(hasattr(view, "reset_button"))
         self.assertFalse(hasattr(view, "suggest_transpose_button"))
+        view.close()
+
+    def test_reset_button_clears_learn_progress_without_changing_target_track(self):
+        with patch("interfaces.learn.view.discover_midi_songs", return_value=[]), patch(
+            "interfaces.learn.view.demo_song",
+            return_value=self._long_song(),
+        ):
+            view = LearnView()
+
+        view._select_target_track(1)
+        view._controller.start(0.0)
+        view._controller.process_detected_note(40, confidence=0.95)
+
+        view.reset_button.click()
+
+        state = view._controller.snapshot()
+        self.assertEqual(state.passed_count, 0)
+        self.assertEqual(state.current_index, 0)
+        self.assertEqual(state.current_target.midi_notes, [40])
+        self.assertEqual(view._target_track.index, 1)
+        self.assertEqual(view.status_label.text(), "Reset.")
+        view.close()
+
+    def test_learn_timeline_playhead_tracks_current_target(self):
+        with patch("interfaces.learn.view.discover_midi_songs", return_value=[]), patch(
+            "interfaces.learn.view.demo_song",
+            return_value=self._long_song(),
+        ):
+            view = LearnView()
+
+        view._select_target_track(1)
+        self.assertAlmostEqual(view.timeline._playhead_time, 0.0)
+
+        view._controller.start(0.0)
+        state = view._controller.process_detected_note(40, confidence=0.95)
+        view._render_state(state)
+
+        self.assertAlmostEqual(view.timeline._playhead_time, 5.5)
+        self.assertEqual(view._controller.snapshot().current_target.midi_notes, [45])
         view.close()
 
     def test_overview_background_click_does_not_steal_display_handle_drag(self):

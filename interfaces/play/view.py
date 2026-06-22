@@ -45,7 +45,7 @@ from interfaces.play.model import (
     PlaySong,
     PlayTarget,
     MidiTrackOption,
-    PracticeRegion,
+    TimeRegion,
 )
 from interfaces.play.transposition import (
     TRANSPOSE_MAX_SEMITONES,
@@ -81,9 +81,9 @@ class TrackUiState:
 class MidiOverviewBar(QWidget):
     """Full-song MIDI overview with a locked lookahead window.
 
-    The overview is a Qt navigation adapter, not practice policy. It owns the
+    The overview is a Qt navigation adapter, not scoring policy. It owns the
     display window shown by ``PianoRollTimeline`` while Play target selection
-    and practice-region timing remain in ``PlayController``.
+    and scoring timing remain in ``PlayController``.
 
     @author Codex - added Play MIDI overview viewport control.
     @author Codex - locked Play overview to the next 15 seconds.
@@ -98,11 +98,11 @@ class MidiOverviewBar(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMouseTracking(True)
         self._song: PlaySong | None = None
-        self._display_window = PracticeRegion(0.0, 0.0)
+        self._display_window = TimeRegion(0.0, 0.0)
         self._playhead_time = 0.0
         self._dragging_playhead = False
 
-    def set_song(self, song: PlaySong | None, window: PracticeRegion | None = None) -> None:
+    def set_song(self, song: PlaySong | None, window: TimeRegion | None = None) -> None:
         """Load the full MIDI bounds represented by the overview bar.
 
         @author Codex - added Play MIDI overview viewport control.
@@ -110,11 +110,11 @@ class MidiOverviewBar(QWidget):
 
         self._song = song
         if song is None:
-            self._display_window = PracticeRegion(0.0, 0.0)
+            self._display_window = TimeRegion(0.0, 0.0)
             self._playhead_time = 0.0
         else:
             self._display_window = self._clamp_window(
-                window or PracticeRegion(song.start_time, song.end_time)
+                window or TimeRegion(song.start_time, song.end_time)
             )
             self._playhead_time = song.start_time
         self.update()
@@ -126,9 +126,9 @@ class MidiOverviewBar(QWidget):
         """
 
         if self._song is None:
-            self._display_window = PracticeRegion(0.0, 0.0)
+            self._display_window = TimeRegion(0.0, 0.0)
         else:
-            self._display_window = self._clamp_window(PracticeRegion(start_time, end_time))
+            self._display_window = self._clamp_window(TimeRegion(start_time, end_time))
         self.update()
 
     def set_playhead(self, playhead_time: float) -> None:
@@ -279,49 +279,44 @@ class MidiOverviewBar(QWidget):
                 x2 = max(x1 + 1, self._time_to_x(note.end_time))
                 painter.drawRect(QRectF(x1, y + 2, x2 - x1, max(2.0, lane_height - 4)))
 
-    def _clamp_window(self, window: PracticeRegion) -> PracticeRegion:
+    def _clamp_window(self, window: TimeRegion) -> TimeRegion:
         """Clamp the displayed window to full-song bounds.
 
         @author Codex - added Play MIDI overview viewport control.
         """
 
         if self._song is None:
-            return PracticeRegion(0.0, 0.0)
+            return TimeRegion(0.0, 0.0)
         duration = max(self._song.end_time - self._song.start_time, 0.0)
         minimum_duration = min(max(duration * 0.02, 0.05), duration) if duration else 0.0
         return window.clamp(self._song.start_time, self._song.end_time, minimum_duration=minimum_duration)
 
 
 class PianoRollTimeline(QWidget):
-    """Piano-roll study timeline with draggable practice-region handles.
+    """Piano-roll timeline for visible Play chart context.
 
     This widget paints MIDI note spans by pitch and time. It does not choose
-    the target track or advance practice; those decisions stay in the view
+    the target track or advance scoring; those decisions stay in the view
     composition and ``PlayController`` respectively.
 
     @author Codex - replaced Play target lane with piano-roll timeline.
     """
-
-    region_changed = Signal(float, float)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setMinimumHeight(520)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setMouseTracking(True)
         self._song: PlaySong | None = None
         self._visible_track_indexes: frozenset[int] = frozenset()
         self._target_track_index: int | None = None
-        self._region = PracticeRegion(0.0, 0.0)
-        self._display_window = PracticeRegion(0.0, 0.0)
+        self._display_window = TimeRegion(0.0, 0.0)
         self._current_target: PlayTarget | None = None
         self._passed_indexes: frozenset[int] = frozenset()
         self._missed_indexes: frozenset[int] = frozenset()
-        self._dragging: str | None = None
         self._transpose_semitones = 0
 
-    def set_song(self, song: PlaySong | None, region: PracticeRegion | None = None) -> None:
+    def set_song(self, song: PlaySong | None) -> None:
         """Render the loaded song context on the piano roll.
 
         @author Codex - added Play piano-roll song rendering.
@@ -331,13 +326,10 @@ class PianoRollTimeline(QWidget):
         self._song = song
         self._visible_track_indexes = frozenset(track.index for track in song.tracks) if song else frozenset()
         self._target_track_index = None
-        if region is None and song is not None:
-            region = PracticeRegion(song.start_time, song.end_time)
-        self._region = region or PracticeRegion(0.0, 0.0)
         self._display_window = (
-            PracticeRegion(song.start_time, song.end_time)
+            TimeRegion(song.start_time, song.end_time)
             if song is not None
-            else PracticeRegion(0.0, 0.0)
+            else TimeRegion(0.0, 0.0)
         )
         self._current_target = None
         self._passed_indexes = frozenset()
@@ -348,17 +340,17 @@ class PianoRollTimeline(QWidget):
         """Limit the piano roll to the overview-selected visible MIDI range.
 
         This is a viewport concern only. It deliberately does not change the
-        controller's practice region or selected Play targets.
+        controller's scoring bounds or selected Play targets.
 
         @author Codex - added Play piano-roll display window.
         """
 
         if self._song is None:
-            self._display_window = PracticeRegion(0.0, 0.0)
+            self._display_window = TimeRegion(0.0, 0.0)
         else:
             duration = max(self._song.end_time - self._song.start_time, 0.0)
             minimum_duration = min(max(duration * 0.02, 0.05), duration) if duration else 0.0
-            self._display_window = PracticeRegion(start_time, end_time).clamp(
+            self._display_window = TimeRegion(start_time, end_time).clamp(
                 self._song.start_time,
                 self._song.end_time,
                 minimum_duration=minimum_duration,
@@ -400,7 +392,6 @@ class PianoRollTimeline(QWidget):
     def set_state(
         self,
         *,
-        region: PracticeRegion,
         current_target: PlayTarget | None,
         passed_indexes: frozenset[int],
         missed_indexes: frozenset[int],
@@ -411,14 +402,13 @@ class PianoRollTimeline(QWidget):
         @author Codex - removed playhead state from the piano-roll timeline.
         """
 
-        self._region = region
         self._current_target = current_target
         self._passed_indexes = passed_indexes
         self._missed_indexes = missed_indexes
         self.update()
 
     def paintEvent(self, event: object) -> None:
-        """Paint pitch lanes, MIDI notes, and practice-region handles.
+        """Paint pitch lanes and visible MIDI notes.
 
         @author Codex - replaced Play timeline rendering with piano roll.
         @author Codex - moved Play playhead rendering into a dedicated bar.
@@ -442,32 +432,7 @@ class PianoRollTimeline(QWidget):
         self._paint_pitch_grid(painter, roll_rect)
         self._paint_time_grid(painter, roll_rect)
         self._paint_notes(painter, roll_rect)
-        self._paint_region(painter, roll_rect)
         painter.end()
-
-    def mousePressEvent(self, event: object) -> None:
-        """Ignore manual region edits in Play.
-
-        @author Codex - removed Play piano-roll draggables.
-        """
-
-        self._dragging = None
-
-    def mouseMoveEvent(self, event: object) -> None:
-        """Ignore manual region edits in Play.
-
-        @author Codex - removed Play piano-roll draggables.
-        """
-
-        self._dragging = None
-
-    def mouseReleaseEvent(self, event: object) -> None:
-        """Stop dragging the active practice-region handle.
-
-        @author Codex - updated Play handle dragging for piano roll.
-        """
-
-        self._dragging = None
 
     def _roll_rect(self) -> QRectF:
         """Return the drawable piano-roll rectangle.
@@ -531,18 +496,6 @@ class PianoRollTimeline(QWidget):
         duration = max(end_time - start_time, 0.001)
         ratio = (seconds - start_time) / duration
         return rect.left() + max(0.0, min(1.0, ratio)) * rect.width()
-
-    def _x_to_time(self, x: float) -> float:
-        """Map an x coordinate back to song seconds.
-
-        @author Codex - added Play piano-roll geometry.
-        """
-
-        rect = self._roll_rect()
-        start_time, end_time = self._timeline_bounds()
-        ratio = (x - rect.left()) / max(rect.width(), 1.0)
-        ratio = max(0.0, min(1.0, ratio))
-        return start_time + ratio * max(end_time - start_time, 0.0)
 
     def _note_to_y(self, midi_note: int, rect: QRectF) -> float:
         """Map a MIDI note to the top y coordinate of its pitch lane.
@@ -651,22 +604,10 @@ class PianoRollTimeline(QWidget):
             return int(midi_note) + self._transpose_semitones
         return int(midi_note)
 
-    def _paint_region(self, painter: QPainter, rect: QRectF) -> None:
-        """Paint selected practice region without manual handles.
-
-        @author Codex - added Play piano-roll region rendering.
-        @author Codex - removed Play piano-roll draggables.
-        """
-
-        start_x = self._time_to_x(self._region.start_time)
-        end_x = self._time_to_x(self._region.end_time)
-        selected = QRectF(start_x, rect.top(), max(1.0, end_x - start_x), rect.height())
-        painter.fillRect(selected, QColor(255, 77, 77, 18))
-
 class PlayView(QWidget):
-    """MIDI-driven song-practice screen.
+    """MIDI-driven song-scoring screen.
 
-    Play is a study surface, so the view shows a piano-roll timeline and track
+    Play is a scoring surface, so the view shows a piano-roll timeline and track
     controls. MIDI parsing, target matching, and live input
     stay behind explicit boundaries.
 
@@ -715,6 +656,21 @@ class PlayView(QWidget):
         self.restart_button.setAccessibleName("Restart")
         self.restart_button.setToolTip("Restart from the beginning")
         self.restart_button.setFixedSize(44, 38)
+        self.speed_combo = QComboBox()
+        self.speed_combo.setObjectName("playSpeedCombo")
+        self.speed_combo.setAccessibleName("Play speed")
+        self.speed_combo.setToolTip("Set Play song speed")
+        for label, multiplier in (
+            ("0.25x", 0.25),
+            ("0.33x", 1.0 / 3.0),
+            ("0.5x", 0.5),
+            ("0.75x", 0.75),
+            ("1x", 1.0),
+            ("1.25x", 1.25),
+            ("1.5x", 1.5),
+        ):
+            self.speed_combo.addItem(label, multiplier)
+        self.speed_combo.setCurrentIndex(4)
         self.sample_rate_label = QLabel("Sample rate: --")
         self.transpose_spin = QSpinBox()
         self.transpose_spin.setRange(TRANSPOSE_MIN_SEMITONES, TRANSPOSE_MAX_SEMITONES)
@@ -750,9 +706,9 @@ class PlayView(QWidget):
         self.timeline_overview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.timeline = PianoRollTimeline()
         self.timeline.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.practice_view_button = QPushButton("Target")
-        self.practice_view_button.setCheckable(True)
-        self.practice_view_button.setChecked(True)
+        self.target_view_button = QPushButton("Target")
+        self.target_view_button.setCheckable(True)
+        self.target_view_button.setChecked(True)
         self.tracks_view_button = QPushButton("Tracks")
         self.tracks_view_button.setCheckable(True)
         self.track_panel = QFrame()
@@ -910,7 +866,7 @@ class PlayView(QWidget):
 
         switcher = QHBoxLayout()
         switcher.setSpacing(6)
-        switcher.addWidget(self.practice_view_button)
+        switcher.addWidget(self.target_view_button)
         switcher.addWidget(self.tracks_view_button)
         side_layout.addLayout(switcher)
 
@@ -929,6 +885,8 @@ class PlayView(QWidget):
         playback_buttons.setSpacing(8)
         playback_buttons.addWidget(self.play_pause_button)
         playback_buttons.addWidget(self.restart_button)
+        playback_buttons.addWidget(QLabel("Speed"))
+        playback_buttons.addWidget(self.speed_combo, 1)
         playback_panel.layout().addLayout(playback_buttons)
         hit_miss_row = QHBoxLayout()
         hit_miss_row.setContentsMargins(0, 0, 0, 0)
@@ -942,14 +900,14 @@ class PlayView(QWidget):
         hit_miss_row.addStretch(1)
         playback_panel.layout().addLayout(hit_miss_row)
 
-        practice_panel = QWidget()
-        practice_layout = QVBoxLayout(practice_panel)
-        practice_layout.setContentsMargins(0, 0, 0, 0)
-        practice_layout.setSpacing(8)
-        practice_layout.addWidget(target_panel)
-        practice_layout.addWidget(feedback_panel)
-        practice_layout.addWidget(playback_panel)
-        practice_layout.addStretch(1)
+        target_status_page = QWidget()
+        target_status_layout = QVBoxLayout(target_status_page)
+        target_status_layout.setContentsMargins(0, 0, 0, 0)
+        target_status_layout.setSpacing(8)
+        target_status_layout.addWidget(target_panel)
+        target_status_layout.addWidget(feedback_panel)
+        target_status_layout.addWidget(playback_panel)
+        target_status_layout.addStretch(1)
 
         tracks_panel = QWidget()
         tracks_layout = QVBoxLayout(tracks_panel)
@@ -965,7 +923,7 @@ class PlayView(QWidget):
         tracks_layout.addWidget(scroll, 1)
 
         self.side_stack = QStackedWidget()
-        self.side_stack.addWidget(practice_panel)
+        self.side_stack.addWidget(target_status_page)
         self.side_stack.addWidget(tracks_panel)
         side_layout.addWidget(self.side_stack, 1)
 
@@ -1045,20 +1003,21 @@ class PlayView(QWidget):
         self.song_combo.currentIndexChanged.connect(self._select_song)
         self.refresh_button.clicked.connect(self.refresh_devices)
         self.start_button.clicked.connect(self.start_input)
-        self.practice_view_button.clicked.connect(self._show_practice_panel)
+        self.target_view_button.clicked.connect(self._show_target_panel)
         self.tracks_view_button.clicked.connect(self._show_tracks_panel)
         self.transpose_spin.valueChanged.connect(self._set_transpose)
         self.transpose_down_button.clicked.connect(self._decrement_transpose)
         self.transpose_up_button.clicked.connect(self._increment_transpose)
         self.play_pause_button.clicked.connect(self.toggle_playback)
         self.restart_button.clicked.connect(self.restart_playback)
+        self.speed_combo.currentIndexChanged.connect(self._set_play_speed)
         self.timeline_overview.playhead_changed.connect(self._seek_playhead)
 
     def _decrement_transpose(self) -> None:
         """Move the Play chart transpose down by one semitone.
 
         The buttons are a compact UI adapter over the same bounded transpose
-        policy as the spin box; the practice chart remains selected track plus
+        policy as the spin box; the scored chart remains selected track plus
         clamped semitone offset.
 
         @author Codex - added explicit Play transpose decrement control.
@@ -1070,7 +1029,7 @@ class PlayView(QWidget):
         """Move the Play chart transpose up by one semitone.
 
         The buttons are a compact UI adapter over the same bounded transpose
-        policy as the spin box; the practice chart remains selected track plus
+        policy as the spin box; the scored chart remains selected track plus
         clamped semitone offset.
 
         @author Codex - added explicit Play transpose increment control.
@@ -1078,17 +1037,17 @@ class PlayView(QWidget):
 
         self.transpose_spin.setValue(clamp_transpose(self._transpose_semitones + 1))
 
-    def _show_practice_panel(self) -> None:
+    def _show_target_panel(self) -> None:
         """Show target and feedback readouts in the side rail.
 
         The choice is purely a workspace layout concern. It does not alter the
-        selected MIDI track or Play practice state.
+        selected MIDI track or Play scoring state.
 
         @author Codex - added side-rail view switcher for target status versus tracks.
         """
 
         self.side_stack.setCurrentIndex(0)
-        self.practice_view_button.setChecked(True)
+        self.target_view_button.setChecked(True)
         self.tracks_view_button.setChecked(False)
 
     def _show_tracks_panel(self) -> None:
@@ -1101,7 +1060,7 @@ class PlayView(QWidget):
         """
 
         self.side_stack.setCurrentIndex(1)
-        self.practice_view_button.setChecked(False)
+        self.target_view_button.setChecked(False)
         self.tracks_view_button.setChecked(True)
 
     def _update_input_button(self) -> None:
@@ -1242,6 +1201,22 @@ class PlayView(QWidget):
         self._render_state(state)
         self._sync_timer()
 
+    def _set_play_speed(self, index: int) -> None:
+        """Apply the selected Play speed to the controller clock.
+
+        Speed is a Play timing policy, not a piano-roll rendering concern, so
+        the widget only forwards the selected multiplier into the controller.
+
+        @author Codex - added Play speed control adapter.
+        """
+
+        multiplier = self.speed_combo.itemData(index)
+        if multiplier is None:
+            return
+        state = self._controller.set_speed_multiplier(float(multiplier), now=time.monotonic())
+        dump("play", "speed_changed", speed=state.speed_multiplier, state=_state_dump(state))
+        self._render_state(state)
+
     def _seek_playhead(self, playhead_time: float) -> None:
         """Move Play to a user-selected overview playhead position.
 
@@ -1346,10 +1321,7 @@ class PlayView(QWidget):
         self.track_list.addStretch(1)
         display_window = self._lookahead_window(self._current_song.start_time)
         self.timeline_overview.set_song(self._current_song, display_window)
-        self.timeline.set_song(
-            self._current_song,
-            display_window,
-        )
+        self.timeline.set_song(self._current_song)
         self.timeline.set_transpose(self._transpose_semitones)
         self.timeline.set_visible_tracks(self._visible_track_indexes())
 
@@ -1518,7 +1490,7 @@ class PlayView(QWidget):
         track = self._find_track(track_index)
         if track is None or self._current_song is None:
             self._controller.clear_section()
-            self.status_label.setText("Choose a target track to practice.")
+            self.status_label.setText("Choose a target track to score.")
             self._render_state()
             return
 
@@ -1538,7 +1510,7 @@ class PlayView(QWidget):
             track_name=track.name,
             transpose=self._transpose_semitones,
             current_target=_target_dump(state.current_target),
-            region={
+            bounds={
                 "start": self._controller.region.start_time,
                 "end": self._controller.region.end_time,
             },
@@ -1624,8 +1596,8 @@ class PlayView(QWidget):
 
         Play is the performance surface, so the chart viewport follows the
         current musical position instead of exposing manual navigation handles.
-        The 15-second lookahead is UI policy; it does not alter the practice
-        region consumed by ``PlayController``.
+        The 15-second lookahead is UI policy; it does not alter the scoring
+        bounds consumed by ``PlayController``.
 
         @author Codex - locked Play overview to the next 15 seconds.
         """
@@ -1636,35 +1608,23 @@ class PlayView(QWidget):
         self.timeline_overview.set_display_window(window.start_time, window.end_time)
         self.timeline.set_display_window(window.start_time, window.end_time)
 
-    def _lookahead_window(self, playhead_time: float) -> PracticeRegion:
+    def _lookahead_window(self, playhead_time: float) -> TimeRegion:
         """Return the locked 15-second Play viewport at ``playhead_time``.
 
         @author Codex - locked Play overview to the next 15 seconds.
         """
 
         if self._current_song is None:
-            return PracticeRegion(0.0, 0.0)
+            return TimeRegion(0.0, 0.0)
         start_time = max(self._current_song.start_time, min(playhead_time, self._current_song.end_time))
         end_time = min(start_time + PLAY_LOOKAHEAD_SECONDS, self._current_song.end_time)
         if end_time - start_time < PLAY_LOOKAHEAD_SECONDS:
             start_time = max(self._current_song.start_time, end_time - PLAY_LOOKAHEAD_SECONDS)
-        return PracticeRegion(start_time, end_time).clamp(
+        return TimeRegion(start_time, end_time).clamp(
             self._current_song.start_time,
             self._current_song.end_time,
             minimum_duration=min(PLAY_LOOKAHEAD_SECONDS, max(self._current_song.end_time - self._current_song.start_time, 0.0)),
         )
-
-    def _set_region(self, start_time: float, end_time: float) -> None:
-        """Apply a piano-roll handle change as the practice region.
-
-        @author Codex - created Play timeline-to-controller wiring.
-        @author Codex - updated region wiring for piano roll.
-        @author Codex - removed Play Run Mode playback controls.
-        """
-
-        state = self._controller.set_region(start_time, end_time)
-        dump("play", "region_changed", start=start_time, end=end_time, state=_state_dump(state))
-        self._render_state(state)
 
     def _update_frame(self) -> None:
         """Advance playback and read the newest live input frame.
@@ -1683,11 +1643,11 @@ class PlayView(QWidget):
         self._sync_timer()
 
     def _render_frame(self, frame: PitchFrame) -> None:
-        """Render one live detector frame into Play practice state.
+        """Render one live detector frame into Play scoring state.
 
         Play shows the live pitch estimate immediately, borrowing Sandbox's
         frame-level readout. A classified pluck still owns target matching so
-        transient frame noise does not advance practice.
+        transient frame noise does not advance scoring.
 
         @author Codex - created Play detector integration.
         @author Codex - aligned Play frame rendering with Sandbox.
@@ -1719,7 +1679,7 @@ class PlayView(QWidget):
                 self.status_label.setText(f"Detected {pluck.note_name}.")
                 self._render_state(state)
             else:
-                self.status_label.setText(f"Detected {pluck.note_name}. Choose a target track to practice.")
+                self.status_label.setText(f"Detected {pluck.note_name}. Choose a target track to score.")
                 self._render_state()
         else:
             self.status_label.setText("Listening.")
@@ -1774,7 +1734,7 @@ class PlayView(QWidget):
         return frame.dominant_peak or (frame.peaks[0] if frame.peaks else None)
 
     def _remember_detected_note(self, midi_note: int) -> None:
-        """Keep a live detected-note readout independent from practice state.
+        """Keep a live detected-note readout independent from scoring state.
 
         The screen needs to prove that live input is reaching the detector even
         before a target track is selected.
@@ -1799,7 +1759,6 @@ class PlayView(QWidget):
         self._sync_locked_display_window(state.playhead_time)
         self.timeline_overview.set_playhead(state.playhead_time)
         self.timeline.set_state(
-            region=self._controller.region,
             current_target=state.current_target,
             passed_indexes=state.passed_target_indexes,
             missed_indexes=state.missed_target_indexes,
@@ -1965,7 +1924,6 @@ class PlayView(QWidget):
         color = {
             None: "#ffd43b",
             Feedback.IDLE: "#9aa4b2",
-            Feedback.WAITING: "#ffd43b",
             Feedback.MISS: "#ff4d4d",
             Feedback.GOOD: "#3ddc84",
             Feedback.PERFECT: "#21d4fd",
@@ -2230,7 +2188,6 @@ def _state_dump(state: object) -> dict[str, object]:
     """
 
     return {
-        "mode": getattr(state, "mode", None),
         "feedback": getattr(state, "feedback", None),
         "running": getattr(state, "is_running", None),
         "index": getattr(state, "current_index", None),

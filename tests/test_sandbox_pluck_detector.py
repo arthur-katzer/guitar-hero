@@ -161,6 +161,22 @@ class PluckDetectorTests(unittest.TestCase):
         self.assertEqual(decay_events, [None, None, None])
         self.assertEqual(detector.state, PluckDetector.LATCHED)
 
+    def test_soft_pluck_can_start_capture_below_previous_attack_threshold(self):
+        detector = PluckDetector(capture_window_seconds=0.16)
+        frames = [
+            (0.00, frame(None, 0.001)),
+            (0.05, frame(81.3, 0.009)),
+            (0.10, frame(162.7, 0.009)),
+            (0.15, frame(245.0, 0.008)),
+            (0.22, frame(326.2, 0.008)),
+        ]
+
+        events = [detector.process_frame(pitch_frame, now) for now, pitch_frame in frames]
+        pluck = next(event for event in events if event is not None)
+
+        self.assertEqual(pluck.note_name, "E2")
+        self.assertGreaterEqual(pluck.confidence, 0.50)
+
 
 class OpenStringFamilyDetectorTests(unittest.TestCase):
     def test_all_single_open_strings_mark_only_the_plucked_family_active(self):

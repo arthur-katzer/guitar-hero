@@ -1,6 +1,6 @@
-"""Play mode practice state machine.
+"""Play mode scoring state machine.
 
-The controller owns teaching behavior and deliberately knows nothing about Qt,
+The controller owns scoring behavior and deliberately knows nothing about Qt,
 MIDI files, or audio devices. Adapters feed it targets and detected MIDI notes.
 """
 
@@ -10,10 +10,9 @@ from dataclasses import dataclass, field
 
 from interfaces.play.model import (
     Feedback,
-    PlayMode,
     PlaySection,
     PlayTarget,
-    PracticeRegion,
+    TimeRegion,
     TargetMatchResult,
 )
 
@@ -21,21 +20,22 @@ from interfaces.play.model import (
 PERFECT_WINDOW_SECONDS = 0.075
 GOOD_WINDOW_SECONDS = 0.250
 RESUME_COUNT_IN_SECONDS = 3.0
-MIN_SCORING_CONFIDENCE = 0.65
+MIN_SCORING_CONFIDENCE = 0.50
+MIN_SPEED_MULTIPLIER = 0.25
+MAX_SPEED_MULTIPLIER = 2.0
 
 
 @dataclass
 class PlayState:
-    """Snapshot of current Play practice progress.
+    """Snapshot of current Play scoring progress.
 
     The view consumes this value instead of reaching into controller internals,
-    which keeps UI refresh code from becoming practice policy.
+    which keeps UI refresh code from becoming scoring policy.
 
     @author Codex - created Play controller state snapshot.
     """
 
-    mode: PlayMode = PlayMode.WAIT
-    feedback: Feedback = Feedback.WAITING
+    feedback: Feedback = Feedback.IDLE
     playhead_time: float = 0.0
     current_target: PlayTarget | None = None
     current_index: int = -1
@@ -49,6 +49,7 @@ class PlayState:
     passed_target_indexes: frozenset[int] = field(default_factory=frozenset)
     missed_target_indexes: frozenset[int] = field(default_factory=frozenset)
     count_in_remaining: float = 0.0
+    speed_multiplier: float = 1.0
 
 
 def match_target(
@@ -78,7 +79,7 @@ def match_target(
             matched_notes=matched,
             missing_notes=missing,
             ratio=ratio,
-            feedback=Feedback.WAITING,
+            feedback=Feedback.IDLE,
         )
 
     exact_timing = timing_delta_seconds is None or abs(timing_delta_seconds) <= PERFECT_WINDOW_SECONDS
@@ -94,30 +95,30 @@ def match_target(
 
 
 class PlayController:
-    """State machine for target-gated Play practice.
+    """State machine for timed Play scoring.
 
-    The controller treats detected notes as events and advances only when the
-    current target is matched. Timing, playback speed, count-in, and looping
-    are intentionally absent because Play no longer has Run Mode.
+    The controller treats detected notes as events against the current song
+    clock. The selected target track owns both expected-note intervals and
+    expected-silence intervals.
 
-    @author Codex - created Play practice controller.
+    @author Codex - created Play scoring controller.
     @author Codex - removed Play Run Mode timing policy.
     """
 
     def __init__(self) -> None:
         self._section = PlaySection(start_time=0.0, end_time=0.0, targets=[])
-        self._region = PracticeRegion(0.0, 0.0)
+        self._region = TimeRegion(0.0, 0.0)
         self._targets: list[PlayTarget] = []
-        self._mode = PlayMode.WAIT
         self._running = False
         self._playhead_time = 0.0
         self._started_at: float | None = None
         self._start_playhead = 0.0
         self._count_in_until: float | None = None
         self._count_in_remaining = 0.0
+        self._speed_multiplier = 1.0
         self._has_started = False
         self._current_index = -1
-        self._feedback = Feedback.WAITING
+        self._feedback = Feedback.IDLE
         self._detected_notes: tuple[int, ...] = ()
         self._matched_notes: tuple[int, ...] = ()
         self._missing_notes: tuple[int, ...] = ()
@@ -129,16 +130,16 @@ class PlayController:
     def section(self) -> PlaySection:
         """Return the active Play section.
 
-        @author Codex - created Play practice controller.
+        @author Codex - created Play scoring controller.
         """
 
         return self._section
 
     @property
-    def region(self) -> PracticeRegion:
-        """Return the active practice region.
+    def region(self) -> TimeRegion:
+        """Return the active Play scoring bounds.
 
-        @author Codex - created Play practice controller.
+        @author Codex - created Play scoring controller.
         """
 
         return self._region
@@ -147,20 +148,20 @@ class PlayController:
     def targets(self) -> tuple[PlayTarget, ...]:
         """Return targets inside the active region.
 
-        @author Codex - created Play practice controller.
+        @author Codex - created Play scoring controller.
         """
 
         return tuple(self._targets)
 
     def set_section(self, section: PlaySection, *, preserve_region: bool = False) -> PlayState:
-        """Replace the practiced section and select its full duration.
+        """Replace the scored section and select its full duration.
 
         Track changes intentionally reset timing and feedback because previous
         playhead state belongs to the old song part. Transpose changes may
         preserve the existing region because they replace pitch expectations
         without changing timing or song bounds.
 
-        @author Codex - created Play practice section loading.
+        @author Codex - created Play scoring section loading.
         @author Codex - added region preservation for Play chart transposition.
         """
 
@@ -168,37 +169,21 @@ class PlayController:
         if preserve_region:
             self._region = self._region.clamp(section.start_time, section.end_time)
         else:
-            self._region = PracticeRegion(section.start_time, section.end_time).clamp(section.start_time, section.end_time)
+            self._region = TimeRegion(section.start_time, section.end_time).clamp(section.start_time, section.end_time)
         return self.restart()
 
     def clear_section(self) -> PlayState:
-        """Clear Play practice when no track is selected.
+        """Clear Play scoring when no track is selected.
 
         @author Codex - created explicit Play no-track state.
         """
 
         self._section = PlaySection(start_time=0.0, end_time=0.0, targets=[])
-        self._region = PracticeRegion(0.0, 0.0)
-        return self.restart()
-
-    def set_region(self, start_time: float, end_time: float) -> PlayState:
-        """Update the manual practice region selected on the timeline.
-
-        Changing handles restarts the selected slice so practice begins from
-        the first target in the new region.
-
-        @author Codex - created Play region selection behavior.
-        @author Codex - removed Play Run Mode timing policy.
-        """
-
-        self._region = PracticeRegion(start_time, end_time).clamp(
-            self._section.start_time,
-            self._section.end_time,
-        )
+        self._region = TimeRegion(0.0, 0.0)
         return self.restart()
 
     def start(self, now: float) -> PlayState:
-        """Start or resume timed Play practice at ``now``.
+        """Start or resume timed Play scoring at ``now``.
 
         The first start begins from the selected region start. Later resumes
         keep the paused playhead visible and wait three seconds before the song
@@ -221,7 +206,7 @@ class PlayController:
         return self.snapshot()
 
     def pause(self, now: float | None = None) -> PlayState:
-        """Pause practice without changing the selected region.
+        """Pause scoring without changing the selected bounds.
 
         @author Codex - created Play pause behavior.
         @author Codex - added timed Play playhead with resume count-in.
@@ -242,6 +227,24 @@ class PlayController:
         """
 
         self._reset_progress_at(self._region.start_time)
+        return self.snapshot()
+
+    def set_speed_multiplier(self, speed_multiplier: float, *, now: float | None = None) -> PlayState:
+        """Set how fast Play advances through the selected song clock.
+
+        Speed changes affect only future elapsed wall time. Advancing to
+        ``now`` before changing the multiplier preserves the current audible
+        position and keeps the UI adapter from owning clock policy.
+
+        @author Codex - added Play speed multiplier policy.
+        """
+
+        self._advance_playhead(now)
+        clamped = min(max(float(speed_multiplier), MIN_SPEED_MULTIPLIER), MAX_SPEED_MULTIPLIER)
+        self._speed_multiplier = clamped
+        if self._running and self._started_at is not None and now is not None:
+            self._started_at = now
+            self._start_playhead = self._playhead_time
         return self.snapshot()
 
     def seek(self, playhead_time: float) -> PlayState:
@@ -272,7 +275,7 @@ class PlayController:
         return self.snapshot()
 
     def process_detected_note(self, midi_note: int, *, confidence: float = 1.0, now: float | None = None) -> PlayState:
-        """Feed one detected guitar note into Play practice.
+        """Feed one detected guitar note into Play scoring.
 
         The detector can emit only one note event today, so this method updates
         partial target matches incrementally instead of requiring a full chord
@@ -311,7 +314,6 @@ class PlayController:
         if current_target is not None and not missing and self._feedback == Feedback.IDLE:
             missing = tuple(current_target.midi_notes)
         return PlayState(
-            mode=self._mode,
             feedback=self._feedback,
             playhead_time=self._playhead_time,
             current_target=current_target,
@@ -326,10 +328,11 @@ class PlayController:
             passed_target_indexes=frozenset(self._passed_indexes),
             missed_target_indexes=frozenset(self._missed_indexes),
             count_in_remaining=self._count_in_remaining,
+            speed_multiplier=self._speed_multiplier,
         )
 
     def _process_wait_note(self, midi_note: int, *, confidence: float) -> PlayState:
-        """Apply a detected note while target-gated teaching is active.
+        """Apply a detected note while timed scoring is active.
 
         @author Codex - created Play Wait Mode matching behavior.
         """
@@ -368,7 +371,7 @@ class PlayController:
             self._count_in_remaining = max(0.0, self._count_in_until - now)
             return
         self._count_in_remaining = 0.0
-        elapsed = max(0.0, now - self._started_at)
+        elapsed = max(0.0, now - self._started_at) * self._speed_multiplier
         end_time = self._region.end_time if self._region.end_time else self._section.end_time
         self._playhead_time = min(self._start_playhead + elapsed, end_time)
         self._mark_missed_targets_before_playhead()
@@ -436,7 +439,7 @@ class PlayController:
         @author Codex - added draggable Play overview start position.
         """
 
-        section_targets = self._section.targets_in_region(self._region)
+        section_targets = self._section.targets_in_time_range(self._region)
         self._targets = [
             target
             for target in section_targets

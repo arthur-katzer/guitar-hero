@@ -70,14 +70,14 @@ def midi_note_name(midi_note: int) -> str:
 def required_match_ratio_for_note_count(note_count: int) -> float:
     """Return the pass threshold for a target of ``note_count`` notes.
 
-    The first implementation accepts partial large chords because live chord
-    detection is still experimental, but keeps one- and two-note targets strict.
+    Play scores the selected song part, so every expected note in a target must
+    be present. Detector improvements should happen in the audio boundary,
+    not by weakening the scoring rule.
 
     @author Codex - created Play target pass threshold policy.
+    @author Codex - made Play chord scoring strict.
     """
 
-    if note_count >= 3:
-        return 0.70
     return 1.0
 
 
@@ -231,7 +231,7 @@ def load_midi_song(
 ) -> PlaySong:
     """Parse one MIDI file into track-level Play sections.
 
-    Each non-empty melodic track becomes a selectable practice part. Percussion
+    Each non-empty melodic track becomes a selectable scored part. Percussion
     channel 9 is excluded by default because Play teaches guitar note targets.
 
     @author Codex - created MIDI parser for Play mode.
@@ -336,7 +336,7 @@ def _measure_marks(midi_file: object, tempo_map: list[tuple[int, int]]) -> tuple
 
     This deliberately uses the first discovered time signature and defers full
     meter-map rendering until Play needs arrangement-grade notation. The
-    piano roll needs stable study landmarks, not a notation editor.
+    piano roll needs stable navigation landmarks, not a notation editor.
 
     @author Codex - added Play piano-roll measure marks.
     """

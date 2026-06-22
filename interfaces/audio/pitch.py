@@ -590,8 +590,8 @@ class PluckDetector:
     def __init__(
         self,
         *,
-        attack_rms_threshold: float = 0.012,
-        attack_rise_threshold: float = 0.004,
+        attack_rms_threshold: float = 0.008,
+        attack_rise_threshold: float = 0.003,
         release_rms_threshold: float = 0.004,
         capture_window_seconds: float = 0.16,
         release_window_seconds: float = 0.22,

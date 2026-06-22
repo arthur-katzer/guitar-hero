@@ -353,6 +353,7 @@ class PianoRollTimeline(QWidget):
         self._current_target: LearnTarget | None = None
         self._passed_indexes: frozenset[int] = frozenset()
         self._missed_indexes: frozenset[int] = frozenset()
+        self._playhead_time = 0.0
         self._dragging: str | None = None
         self._transpose_semitones = 0
 
@@ -377,6 +378,7 @@ class PianoRollTimeline(QWidget):
         self._current_target = None
         self._passed_indexes = frozenset()
         self._missed_indexes = frozenset()
+        self._playhead_time = self._region.start_time
         self.update()
 
     def set_display_window(self, start_time: float, end_time: float) -> None:
@@ -439,17 +441,20 @@ class PianoRollTimeline(QWidget):
         current_target: LearnTarget | None,
         passed_indexes: frozenset[int],
         missed_indexes: frozenset[int],
+        playhead_time: float,
     ) -> None:
         """Update dynamic timeline state from the controller snapshot.
 
         @author Codex - updated Learn timeline state for piano roll.
         @author Codex - removed playhead state from the piano-roll timeline.
+        @author Codex - restored Learn playhead rendering from controller progress.
         """
 
         self._region = region
         self._current_target = current_target
         self._passed_indexes = passed_indexes
         self._missed_indexes = missed_indexes
+        self._playhead_time = float(playhead_time)
         self.update()
 
     def paintEvent(self, event: object) -> None:
@@ -478,6 +483,7 @@ class PianoRollTimeline(QWidget):
         self._paint_time_grid(painter, roll_rect)
         self._paint_notes(painter, roll_rect)
         self._paint_region(painter, roll_rect)
+        self._paint_playhead(painter, roll_rect)
         painter.end()
 
     def mousePressEvent(self, event: object) -> None:
@@ -724,6 +730,25 @@ class PianoRollTimeline(QWidget):
         for x in (start_x, end_x):
             painter.drawRoundedRect(QRectF(x - 5, rect.top() - 10, 10, 20), 3, 3)
 
+    def _paint_playhead(self, painter: QPainter, rect: QRectF) -> None:
+        """Paint the current Learn target position on the piano roll.
+
+        Learn is target-gated, so the playhead means "current practice target"
+        rather than elapsed wall-clock playback.
+
+        @author Codex - added Learn target-gated playhead rendering.
+        """
+
+        start_time, end_time = self._timeline_bounds()
+        if self._playhead_time < start_time or self._playhead_time > end_time:
+            return
+        x = self._time_to_x(self._playhead_time)
+        painter.setPen(QPen(QColor("#ffffff"), 2))
+        painter.drawLine(int(x), int(rect.top() - 10), int(x), int(rect.bottom() + 10))
+        painter.setBrush(QColor("#ffffff"))
+        painter.setPen(QPen(QColor("#05070a"), 1))
+        painter.drawRoundedRect(QRectF(x - 5, rect.top() - 14, 10, 12), 3, 3)
+
 class LearnView(QWidget):
     """MIDI-driven song-practice screen.
 
@@ -818,6 +843,10 @@ class LearnView(QWidget):
         self.detected_label = QLabel("Detected: --")
         self.feedback_label = QLabel(Feedback.WAITING.value)
         self.progress_label = QLabel("0 / 0 targets")
+        self.reset_button = QPushButton("Reset")
+        self.reset_button.setObjectName("learnResetButton")
+        self.reset_button.setAccessibleName("Reset Learn")
+        self.reset_button.setToolTip("Reset Learn progress to the selected region start")
         self._update_input_button()
 
         self._timer = QTimer(self)
@@ -965,6 +994,7 @@ class LearnView(QWidget):
         feedback_panel.layout().addWidget(self.feedback_label)
         feedback_panel.layout().addWidget(self.detected_label)
         feedback_panel.layout().addWidget(self.progress_label)
+        feedback_panel.layout().addWidget(self.reset_button)
 
         practice_panel = QWidget()
         practice_layout = QVBoxLayout(practice_panel)
@@ -1069,6 +1099,7 @@ class LearnView(QWidget):
         self.transpose_spin.valueChanged.connect(self._set_transpose)
         self.transpose_down_button.clicked.connect(self._decrement_transpose)
         self.transpose_up_button.clicked.connect(self._increment_transpose)
+        self.reset_button.clicked.connect(self.reset_practice)
         self.timeline_overview.display_window_changed.connect(self._set_display_window)
         self.timeline.region_changed.connect(self._set_region)
 
@@ -1121,6 +1152,20 @@ class LearnView(QWidget):
         self.side_stack.setCurrentIndex(1)
         self.practice_view_button.setChecked(False)
         self.tracks_view_button.setChecked(True)
+
+    def reset_practice(self) -> None:
+        """Reset Learn progress inside the currently selected practice region.
+
+        The selected region and target track are user intent, so reset clears
+        progress without reloading MIDI or changing the chart selection.
+
+        @author Codex - added Learn reset control adapter.
+        """
+
+        state = self._controller.restart()
+        self.status_label.setText("Reset.")
+        dump("learn", "practice_reset", state=_state_dump(state))
+        self._render_state(state)
 
     def _update_input_button(self) -> None:
         """Render live input as record/stop transport symbology.
@@ -1729,6 +1774,7 @@ class LearnView(QWidget):
             current_target=state.current_target,
             passed_indexes=state.passed_target_indexes,
             missed_indexes=state.missed_target_indexes,
+            playhead_time=state.playhead_time,
         )
         if state.current_target is None:
             self.current_target_label.setText("--")

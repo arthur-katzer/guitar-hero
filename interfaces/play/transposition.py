@@ -2,7 +2,7 @@
 
 Play parses MIDI files as candidate chart material. This module copies parsed
 targets into corrected Play expectations without modifying the source MIDI
-notes, timings, durations, or selected practice region.
+notes, timings, durations, or scoring bounds.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Iterable
 
-from interfaces.play.midi_targets import midi_note_name, required_match_ratio_for_note_count
+from interfaces.play.midi_targets import midi_note_name
 from interfaces.play.model import PlaySection, PlayTarget
 
 
@@ -149,28 +149,6 @@ def validate_guitar_range(targets: Iterable[PlayTarget]) -> GuitarRangeValidatio
     return GuitarRangeValidation(lowest_note=note_range[0], highest_note=note_range[1])
 
 
-def auto_suggest_transpose(targets: Iterable[PlayTarget]) -> int | None:
-    """Suggest an upward transpose when the raw chart is just below E2.
-
-    Play does not auto-apply this suggestion because a low note may mean bass,
-    alternate tuning, or a genuinely wrong track. The button only reports the
-    correction that would bring the lowest raw note to standard E2.
-
-    @author Codex - created Play transpose suggestion policy.
-    """
-
-    original_range = note_range_for_targets(targets, original=True)
-    if original_range is None:
-        return None
-    lowest_note, _highest_note = original_range
-    if lowest_note >= STANDARD_GUITAR_LOW_MIDI:
-        return None
-    suggestion = STANDARD_GUITAR_LOW_MIDI - lowest_note
-    if 1 <= suggestion <= TRANSPOSE_MAX_SEMITONES:
-        return suggestion
-    return None
-
-
 def _target_with_transpose(target: PlayTarget, semitones: int) -> PlayTarget:
     """Copy one target with active expected notes shifted by semitones."""
 
@@ -183,5 +161,5 @@ def _target_with_transpose(target: PlayTarget, semitones: int) -> PlayTarget:
         transposed_midi_notes=transposed_notes,
         note_names=note_names,
         label=" + ".join(note_names),
-        required_match_ratio=required_match_ratio_for_note_count(len(transposed_notes)),
+        required_match_ratio=target.required_match_ratio,
     )

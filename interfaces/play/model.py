@@ -1,8 +1,8 @@
 """Core Play mode data structures.
 
 The Play domain is intentionally independent from Qt, PortAudio, and mido.
-It describes song-practice policy in terms of targets, sections, regions, and
-feedback so adapters can change without changing the teaching rules.
+It describes Play scoring policy in terms of targets, sections, time bounds,
+and feedback so adapters can change without changing scoring rules.
 """
 
 from __future__ import annotations
@@ -21,30 +21,17 @@ class Feedback(str, Enum):
     """
 
     IDLE = "---"
-    WAITING = "WAITING"
     MISS = "MISS"
     GOOD = "GOOD"
     PERFECT = "PERFECT"
-
-
-class PlayMode(str, Enum):
-    """Practice policy supported by Play.
-
-    @author Codex - created Play mode timing vocabulary.
-    @author Codex - removed Play Run Mode.
-    """
-
-    WAIT = "Wait Mode"
 
 
 @dataclass(frozen=True)
 class PlayTarget:
     """One note group the user is expected to play.
 
-    MIDI notes that begin close together become one target because Play is
-    teaching musical gestures, not raw MIDI events. ``required_match_ratio``
-    allows partial multi-note support while chord detection remains
-    experimental.
+    MIDI notes that begin close together become one target because Play scores
+    musical gestures, not raw MIDI events.
 
     ``original_midi_notes`` preserves the parsed MIDI chart exactly as loaded.
     ``transposed_midi_notes`` is the active Play expectation after user chart
@@ -68,7 +55,7 @@ class PlayTarget:
     def midi_notes(self) -> list[int]:
         """Return the active expected notes consumed by Play matching.
 
-        Play treats selected track plus transpose as the practice chart. This
+        Play treats selected track plus transpose as the scored chart. This
         compatibility property keeps existing controller code pointed at that
         policy while raw parsed notes remain available for previews and range
         diagnostics.
@@ -106,7 +93,7 @@ class PlaySection:
     """Playable target sequence for one selected MIDI track.
 
     The section is the controller's stable input boundary. Track parsing and
-    GUI selection can vary, but practice logic consumes only this object.
+    GUI selection can vary, but scoring logic consumes only this object.
 
     @author Codex - created MIDI-driven Play section model.
     """
@@ -124,11 +111,11 @@ class PlaySection:
 
         return max(0.0, self.end_time - self.start_time)
 
-    def targets_in_region(self, region: "PracticeRegion") -> list[PlayTarget]:
-        """Return targets whose starts fall inside the selected practice region.
+    def targets_in_time_range(self, region: "TimeRegion") -> list[PlayTarget]:
+        """Return targets whose starts fall inside the selected time region.
 
         Region filtering is based on target start because Play waits for
-        gestures to begin inside the practice slice.
+        gestures to begin inside the selected slice.
 
         @author Codex - created Play region target selection.
         """
@@ -142,32 +129,32 @@ class PlaySection:
 
 
 @dataclass(frozen=True)
-class PracticeRegion:
-    """Manual practice range selected by the user on the Play timeline.
+class TimeRegion:
+    """Time range used to clamp Play song windows and scoring bounds.
 
-    The handles are the product boundary for choosing what to practice. This
-    value keeps clamping rules testable outside the draggable Qt widget.
+    The Play UI no longer exposes manual region handles, but the controller and
+    visual adapters still need a small immutable value for bounded time spans.
 
-    @author Codex - created Play practice region model.
+    @author Codex - created Play time-region model.
     """
 
     start_time: float
     end_time: float
 
-    def clamp(self, section_start: float, section_end: float, minimum_duration: float = 0.05) -> "PracticeRegion":
+    def clamp(self, section_start: float, section_end: float, minimum_duration: float = 0.05) -> "TimeRegion":
         """Return a valid region inside a section.
 
         ``section_start`` and ``section_end`` define the song bounds. A tiny
         minimum duration prevents the two handles from collapsing into an
         unplayable zero-width selection.
 
-        @author Codex - created Play practice region clamping.
+        @author Codex - created Play time-region clamping.
         """
 
         low = min(float(section_start), float(section_end))
         high = max(float(section_start), float(section_end))
         if math.isclose(low, high):
-            return PracticeRegion(low, high)
+            return TimeRegion(low, high)
 
         start = min(max(float(self.start_time), low), high)
         end = min(max(float(self.end_time), low), high)
@@ -178,14 +165,14 @@ class PracticeRegion:
                 end = start + minimum_duration
             else:
                 start = max(low, end - minimum_duration)
-        return PracticeRegion(start, end)
+        return TimeRegion(start, end)
 
 
 @dataclass(frozen=True)
 class MidiNoteSpan:
-    """One MIDI note span used by Play's piano-roll study timeline.
+    """One MIDI note span used by Play's piano-roll timeline.
 
-    Play targets are grouped teaching policy. Note spans are display material,
+    Play targets are grouped scoring policy. Note spans are display material,
     which lets context tracks stay visible without becoming expected user input.
 
     @author Codex - added piano-roll timeline note model.
@@ -203,8 +190,8 @@ class MidiNoteSpan:
 class MidiMeasureMark:
     """A timeline grid mark derived from the MIDI clock.
 
-    Measure labels are adapter-derived context for studying a song section.
-    They are not practice policy, so the controller continues to work only in
+    Measure labels are adapter-derived context for navigating a song section.
+    They are not scoring policy, so the controller continues to work only in
     seconds and targets.
 
     @author Codex - added piano-roll measure grid model.
@@ -269,9 +256,9 @@ class MidiTrackOption:
 class PlaySong:
     """A MIDI-derived song candidate shown by Play.
 
-    The song owns track choices but does not decide which one to practice when
+    The song owns track choices but does not decide which one to score when
     multiple playable tracks exist. That preserves the product decision that
-    the user selects the teaching part manually.
+    the user selects the target part manually.
 
     @author Codex - created Play song model.
     """
@@ -284,7 +271,7 @@ class PlaySong:
 
     @property
     def requires_track_choice(self) -> bool:
-        """Return whether the user must choose a track before practice starts.
+        """Return whether the user must choose a track before scoring starts.
 
         @author Codex - created explicit Play track-choice policy.
         """
@@ -295,8 +282,8 @@ class PlaySong:
     def start_time(self) -> float:
         """Return the earliest timeline time across all playable tracks.
 
-        The piano roll studies the whole loaded song context, while the
-        controller still receives only one selected practice section.
+        The piano roll shows the whole loaded song context, while the
+        controller still receives only one selected scoring section.
 
         @author Codex - added song-level piano-roll bounds.
         """

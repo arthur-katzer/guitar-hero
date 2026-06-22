@@ -1,10 +1,27 @@
 import unittest
 
-from interfaces.play.controller import PlayController
+from interfaces.play.controller import PlayController, match_target
 from interfaces.play.model import Feedback, PlaySection, PlayTarget
 
 
 class PlayControllerTests(unittest.TestCase):
+    def test_multi_note_target_requires_all_expected_notes(self):
+        target = PlayTarget(
+            start_time=0.0,
+            end_time=1.0,
+            original_midi_notes=[40, 44, 47],
+            transposed_midi_notes=[40, 44, 47],
+            note_names=["E2", "G#2", "B2"],
+            label="E2 + G#2 + B2",
+        )
+
+        partial = match_target(target, {40, 44}, confidence=0.95)
+        complete = match_target(target, {40, 44, 47}, confidence=0.95)
+
+        self.assertFalse(partial.passed)
+        self.assertEqual(partial.feedback, Feedback.IDLE)
+        self.assertTrue(complete.passed)
+
     def test_confident_pluck_during_expected_silence_is_miss_without_consuming_target(self):
         controller = PlayController()
         controller.set_section(self._sustained_section())
@@ -49,7 +66,7 @@ class PlayControllerTests(unittest.TestCase):
         controller.set_section(self._sustained_section())
         controller.start(10.0)
 
-        ignored = controller.process_detected_note(40, confidence=0.40, now=14.0)
+        ignored = controller.process_detected_note(40, confidence=0.30, now=14.0)
 
         self.assertEqual(ignored.feedback, Feedback.IDLE)
         self.assertEqual(ignored.missed_count, 0)
@@ -77,6 +94,18 @@ class PlayControllerTests(unittest.TestCase):
         self.assertEqual(seeked.selected_count, 0)
         self.assertEqual(seeked.missed_count, 0)
         self.assertEqual(seeked.feedback, Feedback.IDLE)
+
+    def test_speed_multiplier_advances_song_clock_faster_than_wall_clock(self):
+        controller = PlayController()
+        controller.set_section(self._sustained_section())
+        controller.set_speed_multiplier(2.0)
+        controller.start(10.0)
+
+        state = controller.update(14.0)
+
+        self.assertAlmostEqual(state.playhead_time, 2.0)
+        self.assertEqual(state.speed_multiplier, 2.0)
+        self.assertTrue(state.is_running)
 
     def _sustained_section(self):
         target = PlayTarget(
