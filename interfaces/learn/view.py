@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from interfaces import theme
 from interfaces.debug_dump import dump
+from interfaces.i18n import text
 from interfaces.audio.pitch import (
     AudioDevice,
     LivePitchInput,
@@ -146,7 +147,7 @@ class MidiOverviewBar(QWidget):
 
         if self._song is None or not self._song.tracks:
             painter.setPen(theme.qcolor(theme.TEXT_MUTED))
-            painter.drawText(bar_rect, Qt.AlignmentFlag.AlignCenter, "Load a MIDI song to navigate the chart.")
+            painter.drawText(bar_rect, Qt.AlignmentFlag.AlignCenter, text("learn.no_song_overview"))
             painter.end()
             return
 
@@ -164,7 +165,7 @@ class MidiOverviewBar(QWidget):
             painter.drawRoundedRect(QRectF(x - 5, bar_rect.top() - 7, 10, bar_rect.height() + 14), 3, 3)
 
         painter.setPen(theme.qcolor(theme.TEXT_DIM))
-        painter.drawText(QPoint(int(bar_rect.left()), int(bar_rect.top() - 5)), "MIDI overview")
+        painter.drawText(QPoint(int(bar_rect.left()), int(bar_rect.top() - 5)), text("learn.midi_overview"))
         painter.drawText(QPoint(int(bar_rect.left()), int(bar_rect.bottom() + 16)), f"{self._song.start_time:.1f}s")
         painter.drawText(QPoint(int(bar_rect.right() - 44), int(bar_rect.bottom() + 16)), f"{self._song.end_time:.1f}s")
         painter.end()
@@ -475,7 +476,7 @@ class PianoRollTimeline(QWidget):
 
         if self._song is None or not self._song.tracks:
             painter.setPen(theme.qcolor(theme.TEXT_MUTED))
-            painter.drawText(roll_rect, Qt.AlignmentFlag.AlignCenter, "Load a MIDI song to inspect its tracks.")
+            painter.drawText(roll_rect, Qt.AlignmentFlag.AlignCenter, text("learn.no_song_tracks"))
             painter.end()
             return
 
@@ -785,13 +786,13 @@ class LearnView(QWidget):
         self.song_combo = QComboBox()
         self.device_combo = QComboBox()
         self.device_combo.setObjectName("inputDeviceCombo")
-        self.refresh_button = QPushButton("Refresh Devices")
+        self.refresh_button = QPushButton(text("action.refresh_devices"))
         self.refresh_button.setObjectName("refreshDevicesButton")
         self.start_button = QPushButton()
         self.start_button.setObjectName("inputToggleButton")
-        self.start_button.setAccessibleName("Start input")
-        self.start_button.setToolTip("Start input")
-        self.sample_rate_label = QLabel("Sample rate: --")
+        self.start_button.setAccessibleName(text("input.start"))
+        self.start_button.setToolTip(text("input.start"))
+        self.sample_rate_label = QLabel(text("input.sample_rate_empty"))
         self.transpose_spin = QSpinBox()
         self.transpose_spin.setRange(TRANSPOSE_MIN_SEMITONES, TRANSPOSE_MAX_SEMITONES)
         self.transpose_spin.setValue(0)
@@ -799,37 +800,37 @@ class LearnView(QWidget):
         self.transpose_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self.transpose_down_button = QPushButton("-")
         self.transpose_down_button.setObjectName("transposeStepDown")
-        self.transpose_down_button.setAccessibleName("Transpose down")
-        self.transpose_down_button.setToolTip("Transpose down one semitone")
+        self.transpose_down_button.setAccessibleName(text("learn.transpose_down"))
+        self.transpose_down_button.setToolTip(text("learn.transpose_down_tip"))
         self.transpose_down_button.setFixedSize(38, 36)
         self.transpose_up_button = QPushButton("+")
         self.transpose_up_button.setObjectName("transposeStepUp")
-        self.transpose_up_button.setAccessibleName("Transpose up")
-        self.transpose_up_button.setToolTip("Transpose up one semitone")
+        self.transpose_up_button.setAccessibleName(text("learn.transpose_up"))
+        self.transpose_up_button.setToolTip(text("learn.transpose_up_tip"))
         self.transpose_up_button.setFixedSize(38, 36)
         self.transpose_value_label = QLabel("+0")
         self.transpose_value_label.setObjectName("transposeValue")
         self.transpose_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.transpose_value_label.setFixedSize(62, 36)
-        self.transpose_preview_label = QLabel("Transpose: +0 semitones")
+        self.transpose_preview_label = QLabel(text("learn.transpose_semitones", signed="+0"))
         self.transpose_preview_label.setObjectName("transposePreview")
-        self.lowest_note_label = QLabel("Lowest note: --")
+        self.lowest_note_label = QLabel(text("learn.lowest_note_empty"))
         self.lowest_note_label.setFixedWidth(112)
-        self.highest_note_label = QLabel("Highest note: --")
+        self.highest_note_label = QLabel(text("learn.highest_note_empty"))
         self.highest_note_label.setFixedWidth(120)
         self.range_warning_label = QLabel("")
         self.transpose_panel = QFrame()
         self.transpose_panel.setObjectName("transposePanel")
-        self.back_button = QPushButton("Back")
-        self.status_label = QLabel("Choose a MIDI song and target track.")
+        self.back_button = QPushButton(text("action.back"))
+        self.status_label = QLabel(text("learn.choose_song_track"))
         self.timeline_overview = MidiOverviewBar()
         self.timeline_overview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.timeline = PianoRollTimeline()
         self.timeline.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.practice_view_button = QPushButton("Target")
+        self.practice_view_button = QPushButton(text("learn.target"))
         self.practice_view_button.setCheckable(True)
         self.practice_view_button.setChecked(True)
-        self.tracks_view_button = QPushButton("Tracks")
+        self.tracks_view_button = QPushButton(text("learn.tracks"))
         self.tracks_view_button.setCheckable(True)
         self.track_panel = QFrame()
         self.track_panel.setObjectName("trackPanel")
@@ -839,14 +840,14 @@ class LearnView(QWidget):
         self.target_group = QButtonGroup(self)
         self.target_group.setExclusive(True)
         self.current_target_label = QLabel("--")
-        self.expected_label = QLabel("Choose a target track to generate Learn targets.")
-        self.detected_label = QLabel("Detected: --")
-        self.feedback_label = QLabel(Feedback.WAITING.value)
-        self.progress_label = QLabel("0 / 0 targets")
-        self.reset_button = QPushButton("Reset")
+        self.expected_label = QLabel(text("learn.choose_targets"))
+        self.detected_label = QLabel(text("learn.detected_empty"))
+        self.feedback_label = QLabel(_feedback_text(Feedback.WAITING))
+        self.progress_label = QLabel(text("learn.targets_count", count="0 / 0"))
+        self.reset_button = QPushButton(text("action.reset"))
         self.reset_button.setObjectName("learnResetButton")
-        self.reset_button.setAccessibleName("Reset Learn")
-        self.reset_button.setToolTip("Reset Learn progress to the selected region start")
+        self.reset_button.setAccessibleName(text("action.reset"))
+        self.reset_button.setToolTip(text("learn.reset_done"))
         self._update_input_button()
 
         self._timer = QTimer(self)
@@ -915,7 +916,7 @@ class LearnView(QWidget):
         root.setSpacing(10)
 
         top = QHBoxLayout()
-        title = QLabel("Learn")
+        title = QLabel(text("screen.learn.title"))
         title.setObjectName("title")
         top.addWidget(title)
         top.addStretch(1)
@@ -932,7 +933,7 @@ class LearnView(QWidget):
         input_panel.setObjectName("panel")
         input_layout = QHBoxLayout(input_panel)
         input_layout.setContentsMargins(12, 10, 12, 10)
-        input_layout.addWidget(QLabel("Input"))
+        input_layout.addWidget(QLabel(text("input.label")))
         input_layout.addWidget(self.device_combo, 1)
         input_layout.addWidget(self.refresh_button)
         input_layout.addWidget(self.start_button)
@@ -948,7 +949,7 @@ class LearnView(QWidget):
         song_picker_layout = QHBoxLayout(song_picker)
         song_picker_layout.setContentsMargins(0, 0, 0, 0)
         song_picker_layout.setSpacing(6)
-        song_picker_layout.addWidget(QLabel("Song"))
+        song_picker_layout.addWidget(QLabel(text("learn.song")))
         song_picker_layout.addWidget(self.song_combo, 1)
         song_layout.addWidget(song_picker, 1)
         song_layout.addWidget(self.transpose_panel, 1)
@@ -961,7 +962,7 @@ class LearnView(QWidget):
         transpose_layout = QHBoxLayout(self.transpose_panel)
         transpose_layout.setContentsMargins(10, 8, 10, 8)
         transpose_layout.setSpacing(8)
-        transpose_title = QLabel("Transpose")
+        transpose_title = QLabel(text("learn.transpose"))
         transpose_title.setObjectName("transposeTitle")
         transpose_layout.addWidget(transpose_title)
         self.transpose_spin.setVisible(False)
@@ -986,11 +987,11 @@ class LearnView(QWidget):
         switcher.addWidget(self.tracks_view_button)
         side_layout.addLayout(switcher)
 
-        target_panel = self._info_panel("Current Target")
+        target_panel = self._info_panel(text("learn.current_target"))
         target_panel.layout().addWidget(self.current_target_label)
         target_panel.layout().addWidget(self.expected_label)
 
-        feedback_panel = self._info_panel("Feedback")
+        feedback_panel = self._info_panel(text("learn.feedback"))
         feedback_panel.layout().addWidget(self.feedback_label)
         feedback_panel.layout().addWidget(self.detected_label)
         feedback_panel.layout().addWidget(self.progress_label)
@@ -1008,7 +1009,7 @@ class LearnView(QWidget):
         tracks_layout = QVBoxLayout(tracks_panel)
         tracks_layout.setContentsMargins(0, 0, 0, 0)
         tracks_layout.setSpacing(8)
-        track_title = QLabel("Tracks")
+        track_title = QLabel(text("learn.tracks"))
         track_title.setObjectName("sectionTitle")
         tracks_layout.addWidget(track_title)
         scroll = QScrollArea()
@@ -1163,7 +1164,7 @@ class LearnView(QWidget):
         """
 
         state = self._controller.restart()
-        self.status_label.setText("Reset.")
+        self.status_label.setText(text("learn.reset_done"))
         dump("learn", "practice_reset", state=_state_dump(state))
         self._render_state(state)
 
@@ -1179,13 +1180,13 @@ class LearnView(QWidget):
 
         if self._running:
             self.start_button.setText("")
-            self.start_button.setAccessibleName("Stop input")
-            self.start_button.setToolTip("Stop input")
+            self.start_button.setAccessibleName(text("input.stop"))
+            self.start_button.setToolTip(text("input.stop"))
             self.start_button.setProperty("inputState", "running")
         else:
             self.start_button.setText("")
-            self.start_button.setAccessibleName("Start input")
-            self.start_button.setToolTip("Start input")
+            self.start_button.setAccessibleName(text("input.start"))
+            self.start_button.setToolTip(text("input.start"))
             self.start_button.setProperty("inputState", "stopped")
         self.start_button.style().unpolish(self.start_button)
         self.start_button.style().polish(self.start_button)
@@ -1213,7 +1214,7 @@ class LearnView(QWidget):
         if codec_index >= 0:
             self.device_combo.setCurrentIndex(codec_index)
         self.start_button.setEnabled(bool(self._devices))
-        self.status_label.setText("No input devices found." if not self._devices else "Ready.")
+        self.status_label.setText(text("input.no_devices") if not self._devices else text("input.ready"))
         dump(
             "learn",
             "devices_refreshed",
@@ -1242,21 +1243,21 @@ class LearnView(QWidget):
             return
         device_index = self.device_combo.currentData()
         if device_index is None:
-            self.status_label.setText("No input device selected.")
+            self.status_label.setText(text("input.no_device_selected"))
             dump("learn", "input_start_blocked", reason="no_device")
             return
         try:
             dump("learn", "input_start_requested", device_index=device_index)
             self._input.start(int(device_index))
         except Exception as exc:
-            self.status_label.setText(f"Could not open input: {exc}")
+            self.status_label.setText(text("input.open_error", error=exc))
             dump("learn", "input_start_failed", device_index=device_index, error=str(exc))
             return
         self._running = True
         self._pluck_detector.reset()
         self._update_input_button()
-        self.sample_rate_label.setText(f"Sample rate: {self._input.sample_rate} Hz")
-        self.status_label.setText("Listening.")
+        self.sample_rate_label.setText(text("input.sample_rate", sample_rate=self._input.sample_rate))
+        self.status_label.setText(text("input.listening"))
         self._frame_count = 0
         self._last_readout_at = 0.0
         self._timer.start()
@@ -1272,7 +1273,7 @@ class LearnView(QWidget):
         self._input.stop()
         self._running = False
         self._update_input_button()
-        self.status_label.setText("Stopped.")
+        self.status_label.setText(text("input.stopped"))
         dump("learn", "input_stopped")
 
     def _load_songs(self) -> None:
@@ -1302,7 +1303,7 @@ class LearnView(QWidget):
             self.song_combo.setCurrentIndex(0)
             self._select_song(0)
         if errors and len(self._songs) == 1:
-            self.status_label.setText(f"Using demo targets. MIDI error: {errors[0]}")
+            self.status_label.setText(text("learn.midi_error_demo", error=errors[0]))
         dump(
             "learn",
             "songs_loaded",
@@ -1355,7 +1356,7 @@ class LearnView(QWidget):
             self._select_target_track(default_track.index)
         elif self._current_song.requires_track_choice:
             self._controller.clear_section()
-            self.status_label.setText("Choose a target track. Visibility and audibility can be changed independently.")
+            self.status_label.setText(text("learn.choose_track_details"))
         elif self._current_song.tracks:
             self._select_target_track(self._current_song.tracks[0].index)
         self._render_state()
@@ -1412,11 +1413,11 @@ class LearnView(QWidget):
         swatch.setObjectName("trackSwatch")
         swatch.setFixedSize(14, 14)
         swatch.setStyleSheet(theme.track_swatch_qss(track.color))
-        target_radio = QRadioButton("Target")
+        target_radio = QRadioButton(text("learn.target"))
         target_radio.toggled.connect(lambda checked, index=track.index: checked and self._select_target_track(index))
         self.target_group.addButton(target_radio)
         self._target_radios[track.index] = target_radio
-        visible_check = QCheckBox("Visible")
+        visible_check = QCheckBox(text("learn.visible"))
         visible_check.setChecked(True)
         visible_check.toggled.connect(lambda checked, index=track.index: self._set_track_visible(index, checked))
 
@@ -1463,16 +1464,16 @@ class LearnView(QWidget):
         @author Codex - added Learn track panel metadata.
         """
 
-        parts = [f"{track.note_count} notes", f"{len(track.section.targets)} targets"]
+        parts = [text("learn.notes_count", count=track.note_count), text("learn.targets_count", count=len(track.section.targets))]
         original_range = self._range_text(note_range_for_targets(track.section.targets, original=True))
         if original_range:
-            parts.append(f"Original range: {original_range}")
+            parts.append(text("learn.original_range", range=original_range))
         if self._target_track is not None and track.index == self._target_track.index:
             transposed_targets = apply_transpose(track.section.targets, self._transpose_semitones)
             transposed_range = self._range_text(note_range_for_targets(transposed_targets))
             if transposed_range:
-                parts.append(f"Transposed range: {transposed_range}")
-            parts.append(f"Transpose: {self._signed_transpose(self._transpose_semitones)}")
+                parts.append(text("learn.transpose_range", range=transposed_range))
+            parts.append(text("learn.transpose_preview", signed=self._signed_transpose(self._transpose_semitones)))
         if track.channel_labels:
             parts.append(f"ch {','.join(track.channel_labels)}")
         if track.instrument_labels:
@@ -1515,7 +1516,7 @@ class LearnView(QWidget):
         track = self._find_track(track_index)
         if track is None or self._current_song is None:
             self._controller.clear_section()
-            self.status_label.setText("Choose a target track to practice.")
+            self.status_label.setText(text("learn.choose_target_track"))
             self._render_state()
             return
 
@@ -1527,7 +1528,7 @@ class LearnView(QWidget):
         state = self._controller.set_section(section)
         self.timeline.set_target_track(track.index)
         self.timeline.set_transpose(self._transpose_semitones)
-        self.status_label.setText(f"Target track: {track.name}. Context tracks can stay visible.")
+        self.status_label.setText(text("learn.target_track", track=track.name))
         dump(
             "learn",
             "target_track_selected",
@@ -1689,13 +1690,13 @@ class LearnView(QWidget):
             if state.current_target is not None:
                 state = self._controller.process_detected_note(pluck.midi, confidence=pluck.confidence, now=time.monotonic())
                 dump("learn", "match_result", state=_state_dump(state))
-                self.status_label.setText(f"Detected {pluck.note_name}.")
+                self.status_label.setText(text("learn.detected_note", note=pluck.note_name))
                 self._render_state(state)
             else:
-                self.status_label.setText(f"Detected {pluck.note_name}. Choose a target track to practice.")
+                self.status_label.setText(text("learn.detected_choose_track", note=pluck.note_name))
                 self._render_state()
         else:
-            self.status_label.setText("Listening.")
+            self.status_label.setText(text("input.listening"))
         self._frame_count += 1
         self._last_readout_at = time.monotonic()
         if self._last_readout_at - getattr(self, "_last_frame_dump_at", 0.0) >= 0.75:
@@ -1778,7 +1779,7 @@ class LearnView(QWidget):
         )
         if state.current_target is None:
             self.current_target_label.setText("--")
-            self.expected_label.setText("Choose a target track to generate Learn targets.")
+            self.expected_label.setText(text("learn.choose_targets"))
         else:
             self.current_target_label.setText(self._target_title(state.current_target))
             self.expected_label.setText(self._expected_text(state.current_target, set(state.matched_notes)))
@@ -1786,10 +1787,15 @@ class LearnView(QWidget):
         detected_notes = self._latest_detected_notes or state.detected_notes
         self.detected_label.setText(self._detected_text(detected_notes))
         self.progress_label.setText(
-            f"{state.passed_count} / {state.selected_count} passed"
-            + (f" | {state.missed_count} miss" if state.missed_count == 1 else f" | {state.missed_count} misses")
+            text(
+                "learn.progress",
+                passed=state.passed_count,
+                selected=state.selected_count,
+                missed=state.missed_count,
+                miss_word=text("learn.progress_miss_one" if state.missed_count == 1 else "learn.progress_miss_many"),
+            )
         )
-        self.feedback_label.setText(state.feedback.value)
+        self.feedback_label.setText(_feedback_text(state.feedback))
         self._set_feedback_color(state.feedback)
         self._update_transpose_readouts()
 
@@ -1800,7 +1806,7 @@ class LearnView(QWidget):
         @author Codex - added desired target frequencies to Learn.
         """
 
-        lines = ["Expected:"]
+        lines = [text("learn.expected")]
         for midi_note in target.midi_notes:
             marker = "[x]" if midi_note in matched_notes else "[ ]"
             lines.append(f"{marker} {self._desired_note_text(midi_note)}")
@@ -1829,9 +1835,9 @@ class LearnView(QWidget):
         """
 
         if not detected_notes:
-            return "Detected: --"
+            return text("learn.detected_empty")
         names = ", ".join(midi_note_name(note) for note in detected_notes[-8:])
-        return f"Detected: {names}"
+        return text("learn.detected", notes=names)
 
     def _update_transpose_readouts(self) -> None:
         """Refresh transpose preview and guitar-range diagnostics.
@@ -1844,9 +1850,9 @@ class LearnView(QWidget):
         signed = self._signed_transpose(self._transpose_semitones)
         self.transpose_value_label.setText(signed)
         if self._target_track is None:
-            self.transpose_preview_label.setText(f"Transpose: {signed} st")
-            self.lowest_note_label.setText("Lowest note: --")
-            self.highest_note_label.setText("Highest note: --")
+            self.transpose_preview_label.setText(text("learn.transpose_preview", signed=signed))
+            self.lowest_note_label.setText(text("learn.lowest_note_empty"))
+            self.highest_note_label.setText(text("learn.highest_note_empty"))
             self._set_range_label_state(self.lowest_note_label, warning=False)
             self._set_range_label_state(self.highest_note_label, warning=False)
             self.range_warning_label.setText("")
@@ -1856,9 +1862,9 @@ class LearnView(QWidget):
         transposed_targets = apply_transpose(self._target_track.section.targets, self._transpose_semitones)
         transposed_range = note_range_for_targets(transposed_targets)
         if original_range is None or transposed_range is None:
-            self.transpose_preview_label.setText(f"Transpose: {signed} st")
-            self.lowest_note_label.setText("Lowest note: --")
-            self.highest_note_label.setText("Highest note: --")
+            self.transpose_preview_label.setText(text("learn.transpose_preview", signed=signed))
+            self.lowest_note_label.setText(text("learn.lowest_note_empty"))
+            self.highest_note_label.setText(text("learn.highest_note_empty"))
             self._set_range_label_state(self.lowest_note_label, warning=False)
             self._set_range_label_state(self.highest_note_label, warning=False)
             self.range_warning_label.setText("")
@@ -1866,17 +1872,20 @@ class LearnView(QWidget):
 
         if original_range[0] == original_range[1]:
             preview = (
-                f"Transpose: {signed} st | "
+                f"{text('learn.transpose_preview', signed=signed)} | "
                 f"{midi_note_name(original_range[0])} -> {midi_note_name(transposed_range[0])}"
             )
         else:
             preview = (
-                f"Range: {midi_note_name(original_range[0])}-{midi_note_name(original_range[1])}"
-                f" -> {midi_note_name(transposed_range[0])}-{midi_note_name(transposed_range[1])}"
+                text(
+                    "learn.range",
+                    original=f"{midi_note_name(original_range[0])}-{midi_note_name(original_range[1])}",
+                    transposed=f"{midi_note_name(transposed_range[0])}-{midi_note_name(transposed_range[1])}",
+                )
             )
         self.transpose_preview_label.setText(preview)
-        self.lowest_note_label.setText(f"Lowest note: {midi_note_name(transposed_range[0])}")
-        self.highest_note_label.setText(f"Highest note: {midi_note_name(transposed_range[1])}")
+        self.lowest_note_label.setText(text("learn.lowest_note", note=midi_note_name(transposed_range[0])))
+        self.highest_note_label.setText(text("learn.highest_note", note=midi_note_name(transposed_range[1])))
 
         validation = validate_guitar_range(transposed_targets)
         self._set_range_label_state(self.lowest_note_label, warning=validation.has_below_range_notes)
@@ -2077,6 +2086,20 @@ def _peak_dump(peak: SpectrumPeak | None) -> dict[str, object] | None:
         "percent": round(getattr(peak, "relative_percent", 0.0), 2),
         "relationship": getattr(peak, "harmonic_relationship", None),
     }
+
+
+def _feedback_text(feedback: Feedback) -> str:
+    """Return localized Learn feedback without changing domain enum values.
+
+    @author Codex - localized Learn interface feedback text.
+    """
+
+    return {
+        Feedback.WAITING: text("learn.feedback.waiting"),
+        Feedback.MISS: text("learn.feedback.miss"),
+        Feedback.GOOD: text("learn.feedback.good"),
+        Feedback.PERFECT: text("learn.feedback.perfect"),
+    }.get(feedback, str(feedback))
 
 
 def _target_dump(target: LearnTarget | None) -> dict[str, object] | None:

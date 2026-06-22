@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication
 from interfaces import theme
 from interfaces.audio.pitch import AudioDevice
 from interfaces.gui.main_window import MainWindow
+from interfaces.i18n import text
 from interfaces.learn.midi_targets import MidiNoteEvent, group_note_events, section_from_targets
 from interfaces.learn.model import LearnSong, MidiNoteSpan, MidiTrackOption
 from interfaces.learn.view import LearnView, MidiOverviewBar, PianoRollTimeline
@@ -46,7 +47,7 @@ class LearnGuiTests(unittest.TestCase):
         ):
             window = MainWindow()
 
-            self.assertEqual([button.text() for button in window.menu.buttons], ["Learn", "Sandbox"])
+            self.assertEqual([button.text() for button in window.menu.buttons], [text("menu.learn"), text("menu.sandbox")])
             self.assertFalse(hasattr(window, "play"))
 
             window._open_option("Play")
@@ -144,7 +145,7 @@ class LearnGuiTests(unittest.TestCase):
         self.assertEqual(state.current_index, 0)
         self.assertEqual(state.current_target.midi_notes, [40])
         self.assertEqual(view._target_track.index, 1)
-        self.assertEqual(view.status_label.text(), "Reset.")
+        self.assertEqual(view.status_label.text(), text("learn.reset_done"))
         view.close()
 
     def test_learn_timeline_playhead_tracks_current_target(self):
@@ -218,8 +219,8 @@ class LearnGuiTests(unittest.TestCase):
         self.assertIs(view.lowest_note_label.parent(), view.transpose_panel)
         self.assertIs(view.highest_note_label.parent(), view.transpose_panel)
         self.assertEqual(view._controller.snapshot().current_target.midi_notes, [38])
-        self.assertEqual(view.lowest_note_label.text(), "Lowest note: D2")
-        self.assertEqual(view.highest_note_label.text(), "Highest note: D2")
+        self.assertEqual(view.lowest_note_label.text(), text("learn.lowest_note", note="D2"))
+        self.assertEqual(view.highest_note_label.text(), text("learn.highest_note", note="D2"))
         self.assertEqual(view.lowest_note_label.property("rangeState"), "warning")
         self.assertEqual(view.highest_note_label.property("rangeState"), "normal")
         self.assertEqual(view.range_warning_label.text(), "")
@@ -234,8 +235,8 @@ class LearnGuiTests(unittest.TestCase):
         self.assertIn("[ ] E2 (82.4 Hz)", view.expected_label.text())
         self.assertIn("D2 -> E2", view.transpose_preview_label.text())
         self.assertEqual(view.transpose_value_label.text(), "+2")
-        self.assertEqual(view.lowest_note_label.text(), "Lowest note: E2")
-        self.assertEqual(view.highest_note_label.text(), "Highest note: E2")
+        self.assertEqual(view.lowest_note_label.text(), text("learn.lowest_note", note="E2"))
+        self.assertEqual(view.highest_note_label.text(), text("learn.highest_note", note="E2"))
         self.assertEqual(view.lowest_note_label.property("rangeState"), "normal")
         self.assertEqual(view.highest_note_label.property("rangeState"), "normal")
         self.assertEqual(view.range_warning_label.text(), "")
@@ -299,7 +300,7 @@ class LearnGuiTests(unittest.TestCase):
 
         view._update_frame()
 
-        self.assertEqual(view.status_label.text(), "Listening.")
+        self.assertEqual(view.status_label.text(), text("input.listening"))
         self.assertIn("E2", view.detected_label.text())
         view.close()
 
@@ -321,7 +322,7 @@ class LearnGuiTests(unittest.TestCase):
         after = view._controller.snapshot()
         self.assertEqual(after.passed_count, 1)
         self.assertIn("E2", view.detected_label.text())
-        self.assertEqual(view.status_label.text(), "Detected E2.")
+        self.assertEqual(view.status_label.text(), text("learn.detected_note", note="E2"))
         view.close()
 
     def test_learn_input_starts_from_selected_device(self):
@@ -344,7 +345,7 @@ class LearnGuiTests(unittest.TestCase):
 
         self.assertEqual(fake_input.started_device_index, 7)
         self.assertTrue(view._running)
-        self.assertEqual(view.status_label.text(), "Listening.")
+        self.assertEqual(view.status_label.text(), text("input.listening"))
         view.close()
 
     def test_input_button_uses_accessible_shape_states(self):
@@ -361,19 +362,19 @@ class LearnGuiTests(unittest.TestCase):
 
         self.assertEqual(view.start_button.text(), "")
         self.assertEqual(view.start_button.property("inputState"), "stopped")
-        self.assertEqual(view.start_button.toolTip(), "Start input")
+        self.assertEqual(view.start_button.toolTip(), text("input.start"))
 
         view.start_input()
 
         self.assertEqual(view.start_button.text(), "")
         self.assertEqual(view.start_button.property("inputState"), "running")
-        self.assertEqual(view.start_button.toolTip(), "Stop input")
+        self.assertEqual(view.start_button.toolTip(), text("input.stop"))
 
         view.stop_input()
 
         self.assertEqual(view.start_button.text(), "")
         self.assertEqual(view.start_button.property("inputState"), "stopped")
-        self.assertEqual(view.start_button.toolTip(), "Start input")
+        self.assertEqual(view.start_button.toolTip(), text("input.start"))
         view.close()
 
     def test_sandbox_input_button_uses_same_shape_states(self):
@@ -387,19 +388,19 @@ class LearnGuiTests(unittest.TestCase):
 
         self.assertEqual(view.start_button.text(), "")
         self.assertEqual(view.start_button.property("inputState"), "stopped")
-        self.assertEqual(view.start_button.toolTip(), "Start input")
+        self.assertEqual(view.start_button.toolTip(), text("input.start"))
 
         view.start_input()
 
         self.assertEqual(view.start_button.text(), "")
         self.assertEqual(view.start_button.property("inputState"), "running")
-        self.assertEqual(view.start_button.toolTip(), "Stop input")
+        self.assertEqual(view.start_button.toolTip(), text("input.stop"))
 
         view.stop_input()
 
         self.assertEqual(view.start_button.text(), "")
         self.assertEqual(view.start_button.property("inputState"), "stopped")
-        self.assertEqual(view.start_button.toolTip(), "Start input")
+        self.assertEqual(view.start_button.toolTip(), text("input.start"))
         view.close()
 
     def _multi_track_song(self) -> LearnSong:

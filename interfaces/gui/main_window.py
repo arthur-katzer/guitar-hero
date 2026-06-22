@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from interfaces.debug_dump import dump
 from interfaces import theme
+from interfaces.i18n import text
 from interfaces.learn.view import LearnView
 from interfaces.sandbox.view import SandboxView
 
@@ -35,6 +36,10 @@ MENU_OPTION_COLORS = {
     "Play": theme.SUCCESS,
     "Learn": theme.ACCENT_PRIMARY,
     "Sandbox": theme.WARNING,
+}
+MENU_OPTION_TEXT_KEYS = {
+    "Learn": "menu.learn",
+    "Sandbox": "menu.sandbox",
 }
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VISUALIZER_MP3_PATH = PROJECT_ROOT / "assets" / "visualizer" / "on-my-knees.mp3"
@@ -280,7 +285,7 @@ class MainMenu(QWidget):
         menu_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
 
         for index, label in enumerate(VISIBLE_MAIN_MENU_OPTIONS):
-            button = MainMenuButton(label, MENU_OPTION_COLORS[label])
+            button = MainMenuButton(text(MENU_OPTION_TEXT_KEYS[label]), MENU_OPTION_COLORS[label])
             button.setCheckable(True)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -376,7 +381,7 @@ class MainMenu(QWidget):
         button = self._buttons[index]
         button.setChecked(True)
         button.setFocus(Qt.FocusReason.OtherFocusReason)
-        self.option_highlighted.emit(button.text())
+        self.option_highlighted.emit(VISIBLE_MAIN_MENU_OPTIONS[index])
 
 
 class SpectrumBackground(QWidget):

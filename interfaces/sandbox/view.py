@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from interfaces import theme
 from interfaces.debug_dump import dump
+from interfaces.i18n import text
 from interfaces.sandbox.audio_pitch import (
     AudioDevice,
     DetectedPluck,
@@ -54,7 +55,7 @@ class SpectrumChart(pg.PlotWidget):
         self.setMinimumHeight(460)
         self.setBackground(theme.qcolor(theme.BACKGROUND))
         self.showGrid(x=True, y=True, alpha=0.18)
-        self.setLabel("left", "Relative magnitude")
+        self.setLabel("left", text("sandbox.chart_title").split(" / ")[0])
         self.setLabel("bottom", "Frequency", units="Hz")
         for axis_name in ("left", "bottom"):
             axis = self.getPlotItem().getAxis(axis_name)
@@ -99,8 +100,8 @@ class SpectrumChart(pg.PlotWidget):
         self._last_marker_update_at = now
         dominant = frame.dominant_peak
         fundamental = frame.likely_fundamental or self._likely_fundamental()
-        self._set_marker(self.dominant_line, self.dominant_text, dominant, "Dominant", 0.95)
-        self._set_marker(self.fundamental_line, self.fundamental_text, fundamental, "Fundamental", 0.76)
+        self._set_marker(self.dominant_line, self.dominant_text, dominant, text("sandbox.dominant"), 0.95)
+        self._set_marker(self.fundamental_line, self.fundamental_text, fundamental, text("sandbox.fundamental"), 0.76)
 
     def _likely_fundamental(self) -> SpectrumPeak | None:
         fundamentals = [peak for peak in self._peaks if peak.harmonic_relationship == "fundamental"]
@@ -160,7 +161,7 @@ class TopPeaksPanel(QFrame):
         """
 
         self._current_pluck = None
-        self.text.setHtml("<pre>Top peaks:\nWaiting for pluck event</pre>")
+        self.text.setHtml(f"<pre>{text('sandbox.top_peaks_waiting')}</pre>")
 
     def set_pluck(self, pluck: DetectedPluck) -> None:
         """Use the latest detected pluck as the stable harmonic reference.
@@ -179,7 +180,7 @@ class TopPeaksPanel(QFrame):
 
         if not frame.peaks:
             return
-        lines = ["<pre>Top peaks:"]
+        lines = [f"<pre>{text('sandbox.top_peaks')}"]
         for index, peak in enumerate(frame.peaks[:5], start=1):
             role = self._role_for_peak(peak)
             row = (
@@ -243,7 +244,7 @@ class DetectedPluckPanel(QFrame):
         layout.setSpacing(8)
         self.note = QLabel("--")
         self.note.setObjectName("lastPluckNote")
-        self.detail = QLabel("Waiting for pluck event")
+        self.detail = QLabel(text("sandbox.waiting_pluck"))
         self.detail.setObjectName("lastPluckDetail")
         self.detail.setWordWrap(True)
         layout.addWidget(self.note)
@@ -257,7 +258,7 @@ class DetectedPluckPanel(QFrame):
 
         self._last_pluck = None
         self.note.setText("--")
-        self.detail.setText("Waiting for pluck event")
+        self.detail.setText(text("sandbox.waiting_pluck"))
 
     def set_pluck(self, pluck: DetectedPluck) -> None:
         """Render a newly classified pluck without following later FFT frames.
@@ -267,12 +268,18 @@ class DetectedPluckPanel(QFrame):
 
         self._last_pluck = pluck
         dominant_midi, dominant_note = frequency_to_note(pluck.dominant_frequency_hz)
-        harmonic_text = ", ".join(pluck.harmonic_matches) if pluck.harmonic_matches else "none"
+        harmonic_text = ", ".join(pluck.harmonic_matches) if pluck.harmonic_matches else text("sandbox.harmonics_none")
         self.note.setText(f"{pluck.note_name} / {pluck.frequency_hz:.1f} Hz")
         self.detail.setText(
-            f"Confidence {pluck.confidence * 100:.0f}% | "
-            f"Dominant Peak: {dominant_note} ({pluck.dominant_frequency_hz:.1f} Hz, MIDI {dominant_midi}) | "
-            f"Reason: {pluck.reason} | Harmonics: {harmonic_text}"
+            text(
+                "sandbox.detail",
+                confidence=text("sandbox.confidence", confidence=f"{pluck.confidence * 100:.0f}"),
+                dominant_note=dominant_note,
+                dominant_hz=pluck.dominant_frequency_hz,
+                dominant_midi=dominant_midi,
+                reason=pluck.reason,
+                harmonics=harmonic_text,
+            )
         )
 
 
@@ -295,7 +302,7 @@ class OpenStringFamiliesPanel(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(7)
-        title = QLabel("Open String Families")
+        title = QLabel(text("sandbox.open_strings"))
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
         for string_name in ("E2", "A2", "D3", "G3", "B3", "E4"):
@@ -308,7 +315,7 @@ class OpenStringFamiliesPanel(QFrame):
             bar.setRange(0, 100)
             bar.setTextVisible(False)
             bar.setFixedHeight(12)
-            detail = QLabel("0% inactive")
+            detail = QLabel(f"0% {text('sandbox.status.inactive')}")
             detail.setObjectName("openStringDetail")
             detail.setMinimumWidth(128)
             row.addWidget(name)
@@ -326,9 +333,9 @@ class OpenStringFamiliesPanel(QFrame):
 
         for string_name, (_name, bar, detail) in self._rows.items():
             bar.setValue(0)
-            bar.setToolTip("Waiting for pluck event")
-            detail.setText("0% inactive")
-            detail.setToolTip("Waiting for pluck event")
+            bar.setToolTip(text("sandbox.waiting_pluck"))
+            detail.setText(f"0% {text('sandbox.status.inactive')}")
+            detail.setToolTip(text("sandbox.waiting_pluck"))
             self._set_bar_status(bar, "inactive")
 
     def set_report(self, report: OpenStringFamilyReport) -> None:
@@ -345,7 +352,7 @@ class OpenStringFamiliesPanel(QFrame):
             score = int(round(family.score_percent))
             bar.setValue(score)
             bar.setToolTip(family.debug_text)
-            detail.setText(f"{score}% {family.status}")
+            detail.setText(f"{score}% {_open_string_status_text(family.status)}")
             detail.setToolTip(family.debug_text)
             self._set_bar_status(bar, family.status)
 
@@ -381,14 +388,14 @@ class SandboxView(QWidget):
         self._last_readout_at = 0.0
 
         self.device_combo = QComboBox()
-        self.refresh_button = QPushButton("Refresh Devices")
+        self.refresh_button = QPushButton(text("action.refresh_devices"))
         self.start_button = QPushButton()
         self.start_button.setObjectName("inputToggleButton")
-        self.start_button.setAccessibleName("Start input")
-        self.start_button.setToolTip("Start input")
-        self.back_button = QPushButton("Back")
-        self.status_label = QLabel("Select an input device.")
-        self.sample_rate_label = QLabel("Sample rate: --")
+        self.start_button.setAccessibleName(text("input.start"))
+        self.start_button.setToolTip(text("input.start"))
+        self.back_button = QPushButton(text("action.back"))
+        self.status_label = QLabel(text("input.no_device_selected"))
+        self.sample_rate_label = QLabel(text("input.sample_rate_empty"))
         self.peak_chart = SpectrumChart()
         self.top_peaks_panel = TopPeaksPanel()
         self.last_pluck_panel = DetectedPluckPanel()
@@ -434,7 +441,7 @@ class SandboxView(QWidget):
         if codec_index >= 0:
             self.device_combo.setCurrentIndex(codec_index)
         self.start_button.setEnabled(bool(self._devices))
-        self.status_label.setText("No input devices found." if not self._devices else "Ready.")
+        self.status_label.setText(text("input.no_devices") if not self._devices else text("input.ready"))
         dump(
             "sandbox",
             "devices_refreshed",
@@ -465,14 +472,14 @@ class SandboxView(QWidget):
             return
         device_index = self.device_combo.currentData()
         if device_index is None:
-            self.status_label.setText("No input device selected.")
+            self.status_label.setText(text("input.no_device_selected"))
             dump("sandbox", "input_start_blocked", reason="no_device")
             return
         try:
             dump("sandbox", "input_start_requested", device_index=device_index)
             self._input.start(int(device_index))
         except Exception as exc:
-            self.status_label.setText(f"Could not open input: {exc}")
+            self.status_label.setText(text("input.open_error", error=exc))
             dump("sandbox", "input_start_failed", device_index=device_index, error=str(exc))
             return
         self._running = True
@@ -481,8 +488,8 @@ class SandboxView(QWidget):
         self.top_peaks_panel.reset()
         self.open_strings_panel.reset()
         self._update_input_button()
-        self.sample_rate_label.setText(f"Sample rate: {self._input.sample_rate} Hz")
-        self.status_label.setText("Listening.")
+        self.sample_rate_label.setText(text("input.sample_rate", sample_rate=self._input.sample_rate))
+        self.status_label.setText(text("input.listening"))
         self._frame_count = 0
         self._last_readout_at = 0.0
         self._timer.start()
@@ -498,7 +505,7 @@ class SandboxView(QWidget):
         self._input.stop()
         self._running = False
         self._update_input_button()
-        self.status_label.setText("Stopped.")
+        self.status_label.setText(text("input.stopped"))
         dump("sandbox", "input_stopped")
 
     def _update_input_button(self) -> None:
@@ -512,12 +519,12 @@ class SandboxView(QWidget):
 
         self.start_button.setText("")
         if self._running:
-            self.start_button.setAccessibleName("Stop input")
-            self.start_button.setToolTip("Stop input")
+            self.start_button.setAccessibleName(text("input.stop"))
+            self.start_button.setToolTip(text("input.stop"))
             self.start_button.setProperty("inputState", "running")
         else:
-            self.start_button.setAccessibleName("Start input")
-            self.start_button.setToolTip("Start input")
+            self.start_button.setAccessibleName(text("input.start"))
+            self.start_button.setToolTip(text("input.start"))
             self.start_button.setProperty("inputState", "stopped")
         self.start_button.style().unpolish(self.start_button)
         self.start_button.style().polish(self.start_button)
@@ -528,7 +535,7 @@ class SandboxView(QWidget):
         root.setSpacing(10)
 
         top = QHBoxLayout()
-        title = QLabel("Sandbox")
+        title = QLabel(text("screen.sandbox.title"))
         title.setObjectName("title")
         top.addWidget(title)
         top.addStretch(1)
@@ -539,7 +546,7 @@ class SandboxView(QWidget):
         controls.setObjectName("panel")
         controls_layout = QHBoxLayout(controls)
         controls_layout.setContentsMargins(12, 10, 12, 10)
-        controls_layout.addWidget(QLabel("Input"))
+        controls_layout.addWidget(QLabel(text("input.label")))
         controls_layout.addWidget(self.device_combo, 1)
         controls_layout.addWidget(self.refresh_button)
         controls_layout.addWidget(self.start_button)
@@ -554,7 +561,7 @@ class SandboxView(QWidget):
         pluck_row.addWidget(self.open_strings_panel, 1)
         root.addLayout(pluck_row, 2)
 
-        chart_title = QLabel("Relative Magnitude / Hz")
+        chart_title = QLabel(text("sandbox.chart_title"))
         chart_title.setObjectName("sectionTitle")
         root.addWidget(chart_title)
         chart_overlay = QWidget()
@@ -601,9 +608,11 @@ class SandboxView(QWidget):
             self.open_strings_panel.set_report(pluck.open_string_families)
             self.top_peaks_panel.set_pluck(pluck)
             self.top_peaks_panel.set_frame(frame)
-            self.status_label.setText(f"Detected pluck: {pluck.note_name}.")
+            self.status_label.setText(text("sandbox.detected_note", note=pluck.note_name))
         else:
-            self.status_label.setText("Listening." if self._pluck_detector.current_pluck else "Listening: waiting for pluck.")
+            self.status_label.setText(
+                text("input.listening") if self._pluck_detector.current_pluck else text("input.listening_waiting_pluck")
+            )
         self.peak_chart.set_frame(frame)
         self._frame_count += 1
         now = time.monotonic()
@@ -688,6 +697,20 @@ def _peak_dump(peak: SpectrumPeak | None) -> dict[str, object] | None:
         "percent": round(getattr(peak, "relative_percent", 0.0), 2),
         "relationship": getattr(peak, "harmonic_relationship", None),
     }
+
+
+def _open_string_status_text(status: str) -> str:
+    """Return localized open-string status while preserving detector states.
+
+    @author Codex - localized Sandbox interface text.
+    """
+
+    return {
+        "active": text("sandbox.status.active"),
+        "uncertain": text("sandbox.status.uncertain"),
+        "harmonic overlap": text("sandbox.status.harmonic_overlap"),
+        "inactive": text("sandbox.status.inactive"),
+    }.get(status, status)
 
 
 def _open_string_dump(report: OpenStringFamilyReport) -> list[dict[str, object]]:
