@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -122,22 +123,21 @@ class TopPeaksPanel(QFrame):
 
     @author Codex - added realtime top peaks panel with fundamental highlight.
     @author Codex - aligned peak annotations with pluck-level detection.
+    @author Codex - changed top peaks from a chart sidebar to an overlay.
     """
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("peaksPanel")
         self._current_pluck: DetectedPluck | None = None
-        self.setMinimumWidth(360)
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        self.setMinimumWidth(520)
+        self.setFixedHeight(150)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Maximum)
         self.text = QTextEdit()
         self.text.setReadOnly(True)
         self.text.setObjectName("peaksText")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
-        title = QLabel("Top peaks")
-        title.setObjectName("sectionTitle")
-        layout.addWidget(title)
         layout.addWidget(self.text, 1)
 
     def reset(self) -> None:
@@ -203,9 +203,11 @@ class DetectedPluckPanel(QFrame):
 
     The panel is intentionally event-driven. Live FFT widgets can keep moving
     during decay, but this readout changes only when the pluck detector emits a
-    new musical event.
+    new musical event. It deliberately has no inner title because the note and
+    diagnostic detail are the only useful content in this area.
 
     @author Codex - changed note readout from frame-level updates to pluck events.
+    @author Codex - restored Sandbox note readout without the redundant title.
     """
 
     def __init__(self, parent: QWidget | None = None):
@@ -217,14 +219,11 @@ class DetectedPluckPanel(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(8)
-        title = QLabel("Detected Note")
-        title.setObjectName("sectionTitle")
         self.note = QLabel("--")
         self.note.setObjectName("lastPluckNote")
         self.detail = QLabel("Waiting for pluck event")
         self.detail.setObjectName("lastPluckDetail")
         self.detail.setWordWrap(True)
-        layout.addWidget(title)
         layout.addWidget(self.note)
         layout.addWidget(self.detail)
 
@@ -373,7 +372,10 @@ class SandboxView(QWidget):
 
         self.device_combo = QComboBox()
         self.refresh_button = QPushButton("Refresh Devices")
-        self.start_button = QPushButton("Start Input")
+        self.start_button = QPushButton()
+        self.start_button.setObjectName("inputToggleButton")
+        self.start_button.setAccessibleName("Start input")
+        self.start_button.setToolTip("Start input")
         self.back_button = QPushButton("Back")
         self.status_label = QLabel("Select an input device.")
         self.sample_rate_label = QLabel("Sample rate: --")
@@ -381,6 +383,7 @@ class SandboxView(QWidget):
         self.top_peaks_panel = TopPeaksPanel()
         self.last_pluck_panel = DetectedPluckPanel()
         self.open_strings_panel = OpenStringFamiliesPanel()
+        self._update_input_button()
 
         self._timer = QTimer(self)
         self._timer.setInterval(16)
@@ -467,7 +470,7 @@ class SandboxView(QWidget):
         self.last_pluck_panel.reset()
         self.top_peaks_panel.reset()
         self.open_strings_panel.reset()
-        self.start_button.setText("Stop Input")
+        self._update_input_button()
         self.sample_rate_label.setText(f"Sample rate: {self._input.sample_rate} Hz")
         self.status_label.setText("Listening.")
         self._frame_count = 0
@@ -484,9 +487,30 @@ class SandboxView(QWidget):
         self._timer.stop()
         self._input.stop()
         self._running = False
-        self.start_button.setText("Start Input")
+        self._update_input_button()
         self.status_label.setText("Stopped.")
         dump("sandbox", "input_stopped")
+
+    def _update_input_button(self) -> None:
+        """Render live input as the control's shape, not an inner icon.
+
+        The sandbox owns the input stream directly, so the transport symbol is
+        the whole button: red circle to start capture, white square to stop.
+
+        @author Codex - replaced Sandbox input text with shape-only transport control.
+        """
+
+        self.start_button.setText("")
+        if self._running:
+            self.start_button.setAccessibleName("Stop input")
+            self.start_button.setToolTip("Stop input")
+            self.start_button.setProperty("inputState", "running")
+        else:
+            self.start_button.setAccessibleName("Start input")
+            self.start_button.setToolTip("Start input")
+            self.start_button.setProperty("inputState", "stopped")
+        self.start_button.style().unpolish(self.start_button)
+        self.start_button.style().polish(self.start_button)
 
     def _build_layout(self) -> None:
         root = QVBoxLayout(self)
@@ -523,11 +547,14 @@ class SandboxView(QWidget):
         chart_title = QLabel("Relative Magnitude / Hz")
         chart_title.setObjectName("sectionTitle")
         root.addWidget(chart_title)
-        chart_row = QHBoxLayout()
-        chart_row.setSpacing(10)
-        chart_row.addWidget(self.peak_chart, 3)
-        chart_row.addWidget(self.top_peaks_panel)
-        root.addLayout(chart_row, 8)
+        chart_overlay = QWidget()
+        chart_layout = QGridLayout(chart_overlay)
+        chart_layout.setContentsMargins(0, 0, 0, 0)
+        chart_layout.setSpacing(0)
+        chart_layout.addWidget(self.peak_chart, 0, 0)
+        chart_layout.addWidget(self.top_peaks_panel, 0, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
+        self.top_peaks_panel.raise_()
+        root.addWidget(chart_overlay, 8)
 
     def _connect_signals(self) -> None:
         self.refresh_button.clicked.connect(self.refresh_devices)
@@ -620,6 +647,29 @@ class SandboxView(QWidget):
             }
             QPushButton:hover {
                 border-color: #ffd43b;
+            }
+            #inputToggleButton {
+                min-width: 34px;
+                max-width: 34px;
+                min-height: 34px;
+                max-height: 34px;
+                border-radius: 17px;
+                padding: 0;
+                background: #ff3b30;
+                border: 0;
+            }
+            #inputToggleButton:hover {
+                background: #ff5a52;
+                border: 0;
+            }
+            #inputToggleButton[inputState="running"] {
+                border-radius: 4px;
+                background: #f5f5f5;
+                border: 0;
+            }
+            #inputToggleButton[inputState="running"]:hover {
+                background: #ffffff;
+                border: 0;
             }
             #peaksPanel {
                 background: #111824;

@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
-import os
 from pathlib import Path
-import tempfile
 import time
 
 from PySide6.QtCore import QPoint, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -22,14 +20,13 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QStackedWidget,
     QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from interfaces.audio.midi_player import FluidSynthMidiPlayer
-from interfaces.audio.midi_rendering import FilteredMidiRenderer, FilteredMidiRenderRequest
 from interfaces.debug_dump import dump
 from interfaces.audio.pitch import (
     AudioDevice,
@@ -44,7 +41,6 @@ from interfaces.learn.controller import LearnController
 from interfaces.learn.midi_targets import demo_song, discover_midi_songs, load_midi_song, midi_note_name
 from interfaces.learn.model import (
     Feedback,
-    LearnMode,
     LearnSection,
     LearnSong,
     LearnTarget,
@@ -52,11 +48,9 @@ from interfaces.learn.model import (
     PracticeRegion,
 )
 from interfaces.learn.transposition import (
-    STANDARD_GUITAR_LOW_MIDI,
     TRANSPOSE_MAX_SEMITONES,
     TRANSPOSE_MIN_SEMITONES,
     apply_transpose,
-    auto_suggest_transpose,
     clamp_transpose,
     note_range_for_targets,
     transpose_section,
@@ -72,16 +66,265 @@ HANDLE_HIT_RADIUS = 10
 class TrackUiState:
     """Mutable Qt-side controls for one loaded MIDI track.
 
-    Visibility and audibility are independent product controls. Keeping them
-    outside ``LearnController`` prevents accompaniment context from becoming
-    target-generation policy.
+    Visibility is a display-only control. Keeping it outside
+    ``LearnController`` prevents chart context from becoming target-generation
+    policy.
 
     @author Codex - added Learn piano-roll track UI state.
+    @author Codex - removed Learn Run Mode playback state.
     """
 
     visible: bool = True
-    audible: bool = True
-    solo: bool = False
+
+
+class MidiOverviewBar(QWidget):
+    """Full-song MIDI overview with draggable visible-window handles.
+
+    The overview is a Qt navigation adapter, not practice policy. It owns the
+    display window shown by ``PianoRollTimeline`` while Learn target selection
+    and practice-region timing remain in ``LearnController``.
+
+    @author Codex - added Learn MIDI overview viewport control.
+    """
+
+    display_window_changed = Signal(float, float)
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setMinimumHeight(72)
+        self.setMaximumHeight(82)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMouseTracking(True)
+        self._song: LearnSong | None = None
+        self._display_window = PracticeRegion(0.0, 0.0)
+        self._dragging: str | None = None
+        self._drag_start_x = 0
+        self._drag_start_window = PracticeRegion(0.0, 0.0)
+
+    def set_song(self, song: LearnSong | None, window: PracticeRegion | None = None) -> None:
+        """Load the full MIDI bounds represented by the overview bar.
+
+        @author Codex - added Learn MIDI overview viewport control.
+        """
+
+        self._song = song
+        if song is None:
+            self._display_window = PracticeRegion(0.0, 0.0)
+        else:
+            self._display_window = self._clamp_window(
+                window or PracticeRegion(song.start_time, song.end_time)
+            )
+        self.update()
+
+    def set_display_window(self, start_time: float, end_time: float) -> None:
+        """Render an externally selected piano-roll display window.
+
+        @author Codex - added Learn MIDI overview viewport control.
+        """
+
+        if self._song is None:
+            self._display_window = PracticeRegion(0.0, 0.0)
+        else:
+            self._display_window = self._clamp_window(PracticeRegion(start_time, end_time))
+        self.update()
+
+    def paintEvent(self, event: object) -> None:
+        """Paint the full MIDI duration and the visible piano-roll window.
+
+        @author Codex - added Learn MIDI overview viewport control.
+        """
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), QColor("#0d1118"))
+
+        bar_rect = self._bar_rect()
+        painter.setPen(QPen(QColor("#26364a"), 1))
+        painter.setBrush(QColor("#111824"))
+        painter.drawRoundedRect(bar_rect, 6, 6)
+
+        if self._song is None or not self._song.tracks:
+            painter.setPen(QColor("#b8c7dc"))
+            painter.drawText(bar_rect, Qt.AlignmentFlag.AlignCenter, "Load a MIDI song to navigate the chart.")
+            painter.end()
+            return
+
+        self._paint_note_overview(painter, bar_rect)
+        start_x = self._time_to_x(self._display_window.start_time)
+        end_x = self._time_to_x(self._display_window.end_time)
+        selected = QRectF(start_x, bar_rect.top(), max(1.0, end_x - start_x), bar_rect.height())
+        painter.fillRect(selected, QColor(33, 212, 253, 42))
+        painter.setPen(QPen(QColor("#21d4fd"), 2))
+        painter.drawRoundedRect(selected, 4, 4)
+
+        painter.setBrush(QColor("#21d4fd"))
+        painter.setPen(QPen(QColor("#05070a"), 1))
+        for x in (start_x, end_x):
+            painter.drawRoundedRect(QRectF(x - 5, bar_rect.top() - 7, 10, bar_rect.height() + 14), 3, 3)
+
+        painter.setPen(QColor("#91a4bd"))
+        painter.drawText(QPoint(int(bar_rect.left()), int(bar_rect.top() - 5)), "MIDI overview")
+        painter.drawText(QPoint(int(bar_rect.left()), int(bar_rect.bottom() + 16)), f"{self._song.start_time:.1f}s")
+        painter.drawText(QPoint(int(bar_rect.right() - 44), int(bar_rect.bottom() + 16)), f"{self._song.end_time:.1f}s")
+        painter.end()
+
+    def mousePressEvent(self, event: object) -> None:
+        """Start dragging a visible-window handle or the window body.
+
+        @author Codex - added Learn MIDI overview viewport control.
+        @author Codex - prevented overview background clicks from stealing a handle drag.
+        @author Codex - added Learn overview body panning.
+        """
+
+        if self._song is None:
+            return
+        position = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        start_x = self._time_to_x(self._display_window.start_time)
+        end_x = self._time_to_x(self._display_window.end_time)
+        self._drag_start_x = position.x()
+        self._drag_start_window = self._display_window
+        if self._overview_handle_hit(position, start_x):
+            self._dragging = "start"
+            return
+        if self._overview_handle_hit(position, end_x):
+            self._dragging = "end"
+            return
+        if self._overview_body_hit(position, start_x, end_x):
+            self._dragging = "body"
+            return
+        self._dragging = None
+
+    def mouseMoveEvent(self, event: object) -> None:
+        """Move the active visible-window handle or body.
+
+        @author Codex - added Learn MIDI overview viewport control.
+        @author Codex - added Learn overview body panning.
+        """
+
+        if self._dragging is None or self._song is None:
+            return
+        position = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        if self._dragging == "body":
+            start_mouse_time = self._x_to_time(self._drag_start_x)
+            current_mouse_time = self._x_to_time(position.x())
+            delta = current_mouse_time - start_mouse_time
+            duration = self._drag_start_window.end_time - self._drag_start_window.start_time
+            start_time = self._drag_start_window.start_time + delta
+            end_time = self._drag_start_window.end_time + delta
+            if start_time < self._song.start_time:
+                start_time = self._song.start_time
+                end_time = start_time + duration
+            if end_time > self._song.end_time:
+                end_time = self._song.end_time
+                start_time = end_time - duration
+            window = PracticeRegion(start_time, end_time)
+        else:
+            handle_time = self._x_to_time(position.x())
+            if self._dragging == "start":
+                window = PracticeRegion(handle_time, self._display_window.end_time)
+            else:
+                window = PracticeRegion(self._display_window.start_time, handle_time)
+        self._display_window = self._clamp_window(window)
+        self.display_window_changed.emit(self._display_window.start_time, self._display_window.end_time)
+        self.update()
+
+    def mouseReleaseEvent(self, event: object) -> None:
+        """Stop dragging the visible-window handle.
+
+        @author Codex - added Learn MIDI overview viewport control.
+        """
+
+        self._dragging = None
+
+    def _bar_rect(self) -> QRectF:
+        """Return the drawable overview rectangle.
+
+        @author Codex - added Learn MIDI overview viewport control.
+        """
+
+        return QRectF(self.rect()).adjusted(12, 22, -12, -22)
+
+    def _overview_handle_hit(self, position: QPoint, handle_x: float) -> bool:
+        """Return whether a click is inside an overview handle.
+
+        @author Codex - prevented overview background clicks from stealing a handle drag.
+        """
+
+        rect = self._bar_rect()
+        return (
+            abs(position.x() - handle_x) <= HANDLE_HIT_RADIUS
+            and rect.top() - 10 <= position.y() <= rect.bottom() + 10
+        )
+
+    def _overview_body_hit(self, position: QPoint, start_x: float, end_x: float) -> bool:
+        """Return whether a click is inside the movable overview window body.
+
+        @author Codex - added Learn overview body panning.
+        """
+
+        rect = self._bar_rect()
+        return (
+            start_x + HANDLE_HIT_RADIUS < position.x() < end_x - HANDLE_HIT_RADIUS
+            and rect.top() <= position.y() <= rect.bottom()
+        )
+
+    def _time_to_x(self, seconds: float) -> float:
+        """Map full-song seconds to an overview x coordinate.
+
+        @author Codex - added Learn MIDI overview viewport control.
+        """
+
+        if self._song is None:
+            return self._bar_rect().left()
+        rect = self._bar_rect()
+        duration = max(self._song.end_time - self._song.start_time, 0.001)
+        ratio = (seconds - self._song.start_time) / duration
+        return rect.left() + max(0.0, min(1.0, ratio)) * rect.width()
+
+    def _x_to_time(self, x: float) -> float:
+        """Map an overview x coordinate back to full-song seconds.
+
+        @author Codex - added Learn MIDI overview viewport control.
+        """
+
+        if self._song is None:
+            return 0.0
+        rect = self._bar_rect()
+        ratio = (x - rect.left()) / max(rect.width(), 1.0)
+        ratio = max(0.0, min(1.0, ratio))
+        return self._song.start_time + ratio * max(self._song.end_time - self._song.start_time, 0.0)
+
+    def _paint_note_overview(self, painter: QPainter, rect: QRectF) -> None:
+        """Paint compact note density lanes for the full MIDI.
+
+        @author Codex - added Learn MIDI overview viewport control.
+        """
+
+        assert self._song is not None
+        lane_count = max(1, len(self._song.tracks))
+        lane_height = rect.height() / lane_count
+        for lane_index, track in enumerate(self._song.tracks):
+            y = rect.top() + lane_index * lane_height
+            color = QColor(track.color)
+            color.setAlpha(150)
+            painter.setBrush(color)
+            painter.setPen(Qt.PenStyle.NoPen)
+            for note in track.notes:
+                x1 = self._time_to_x(note.start_time)
+                x2 = max(x1 + 1, self._time_to_x(note.end_time))
+                painter.drawRect(QRectF(x1, y + 2, x2 - x1, max(2.0, lane_height - 4)))
+
+    def _clamp_window(self, window: PracticeRegion) -> PracticeRegion:
+        """Clamp the displayed window to full-song bounds.
+
+        @author Codex - added Learn MIDI overview viewport control.
+        """
+
+        if self._song is None:
+            return PracticeRegion(0.0, 0.0)
+        duration = max(self._song.end_time - self._song.start_time, 0.0)
+        minimum_duration = min(max(duration * 0.02, 0.05), duration) if duration else 0.0
+        return window.clamp(self._song.start_time, self._song.end_time, minimum_duration=minimum_duration)
 
 
 class PianoRollTimeline(QWidget):
@@ -98,14 +341,15 @@ class PianoRollTimeline(QWidget):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setMinimumHeight(380)
+        self.setMinimumHeight(520)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
         self._song: LearnSong | None = None
         self._visible_track_indexes: frozenset[int] = frozenset()
         self._target_track_index: int | None = None
         self._region = PracticeRegion(0.0, 0.0)
-        self._playhead_time = 0.0
+        self._display_window = PracticeRegion(0.0, 0.0)
         self._current_target: LearnTarget | None = None
         self._passed_indexes: frozenset[int] = frozenset()
         self._missed_indexes: frozenset[int] = frozenset()
@@ -116,6 +360,7 @@ class PianoRollTimeline(QWidget):
         """Render the loaded song context on the piano roll.
 
         @author Codex - added Learn piano-roll song rendering.
+        @author Codex - initialized Learn piano-roll display window.
         """
 
         self._song = song
@@ -124,10 +369,35 @@ class PianoRollTimeline(QWidget):
         if region is None and song is not None:
             region = PracticeRegion(song.start_time, song.end_time)
         self._region = region or PracticeRegion(0.0, 0.0)
-        self._playhead_time = self._region.start_time
+        self._display_window = (
+            PracticeRegion(song.start_time, song.end_time)
+            if song is not None
+            else PracticeRegion(0.0, 0.0)
+        )
         self._current_target = None
         self._passed_indexes = frozenset()
         self._missed_indexes = frozenset()
+        self.update()
+
+    def set_display_window(self, start_time: float, end_time: float) -> None:
+        """Limit the piano roll to the overview-selected visible MIDI range.
+
+        This is a viewport concern only. It deliberately does not change the
+        controller's practice region or selected Learn targets.
+
+        @author Codex - added Learn piano-roll display window.
+        """
+
+        if self._song is None:
+            self._display_window = PracticeRegion(0.0, 0.0)
+        else:
+            duration = max(self._song.end_time - self._song.start_time, 0.0)
+            minimum_duration = min(max(duration * 0.02, 0.05), duration) if duration else 0.0
+            self._display_window = PracticeRegion(start_time, end_time).clamp(
+                self._song.start_time,
+                self._song.end_time,
+                minimum_duration=minimum_duration,
+            )
         self.update()
 
     def set_transpose(self, semitones: int) -> None:
@@ -144,9 +414,10 @@ class PianoRollTimeline(QWidget):
         self.update()
 
     def set_visible_tracks(self, track_indexes: frozenset[int]) -> None:
-        """Apply visibility state without changing audible playback state.
+        """Apply visibility state for chart context tracks.
 
         @author Codex - added Learn piano-roll visibility control.
+        @author Codex - removed Learn Run Mode playback controls.
         """
 
         self._visible_track_indexes = track_indexes
@@ -165,7 +436,6 @@ class PianoRollTimeline(QWidget):
         self,
         *,
         region: PracticeRegion,
-        playhead_time: float,
         current_target: LearnTarget | None,
         passed_indexes: frozenset[int],
         missed_indexes: frozenset[int],
@@ -173,19 +443,20 @@ class PianoRollTimeline(QWidget):
         """Update dynamic timeline state from the controller snapshot.
 
         @author Codex - updated Learn timeline state for piano roll.
+        @author Codex - removed playhead state from the piano-roll timeline.
         """
 
         self._region = region
-        self._playhead_time = playhead_time
         self._current_target = current_target
         self._passed_indexes = passed_indexes
         self._missed_indexes = missed_indexes
         self.update()
 
     def paintEvent(self, event: object) -> None:
-        """Paint pitch lanes, MIDI notes, region handles, and playhead.
+        """Paint pitch lanes, MIDI notes, and practice-region handles.
 
         @author Codex - replaced Learn timeline rendering with piano roll.
+        @author Codex - moved Learn playhead rendering into a dedicated bar.
         """
 
         painter = QPainter(self)
@@ -207,7 +478,6 @@ class PianoRollTimeline(QWidget):
         self._paint_time_grid(painter, roll_rect)
         self._paint_notes(painter, roll_rect)
         self._paint_region(painter, roll_rect)
-        self._paint_playhead(painter, roll_rect)
         painter.end()
 
     def mousePressEvent(self, event: object) -> None:
@@ -267,26 +537,35 @@ class PianoRollTimeline(QWidget):
         """Return visible timeline bounds.
 
         @author Codex - added Learn piano-roll geometry.
+        @author Codex - made Learn piano-roll bounds follow the overview viewport.
         """
 
         if self._song is None:
             return (0.0, 0.0)
-        return (self._song.start_time, self._song.end_time)
+        return (self._display_window.start_time, self._display_window.end_time)
 
     def _pitch_bounds(self) -> tuple[int, int]:
         """Return visible MIDI pitch bounds with a small vertical pad.
 
         @author Codex - added Learn piano-roll geometry.
+        @author Codex - limited Learn piano-roll pitch bounds to the displayed window.
         """
 
         if self._song is None:
             return (40, 64)
+        visible_start, visible_end = self._timeline_bounds()
         notes: list[int] = []
         for track in self._song.tracks:
             if track.notes:
-                notes.extend(self._display_note_for_track(track.index, note.midi_note) for note in track.notes)
+                notes.extend(
+                    self._display_note_for_track(track.index, note.midi_note)
+                    for note in track.notes
+                    if note.end_time >= visible_start and note.start_time <= visible_end
+                )
                 continue
             for target in track.section.targets:
+                if not visible_start <= target.start_time <= visible_end:
+                    continue
                 notes.extend(
                     self._display_note_for_track(track.index, midi_note)
                     for midi_note in target.original_midi_notes
@@ -354,10 +633,12 @@ class PianoRollTimeline(QWidget):
         """Paint measure marks when available, otherwise coarse seconds.
 
         @author Codex - added Learn piano-roll time axis.
+        @author Codex - limited Learn piano-roll time grid to the displayed window.
         """
 
         assert self._song is not None
-        marks = [mark for mark in self._song.measure_marks if self._song.start_time <= mark.start_time <= self._song.end_time]
+        start_time, end_time = self._timeline_bounds()
+        marks = [mark for mark in self._song.measure_marks if start_time <= mark.start_time <= end_time]
         if marks:
             for mark in marks:
                 x = self._time_to_x(mark.start_time)
@@ -367,7 +648,6 @@ class PianoRollTimeline(QWidget):
                 painter.drawText(QPoint(int(x + 4), int(rect.top() - 8)), mark.label)
             return
 
-        start_time, end_time = self._timeline_bounds()
         duration = max(end_time - start_time, 0.001)
         tick_count = max(4, min(12, int(rect.width() // 90)))
         painter.setPen(QPen(QColor("#25344a"), 1))
@@ -384,9 +664,11 @@ class PianoRollTimeline(QWidget):
         """Paint visible MIDI note spans as colored piano-roll rectangles.
 
         @author Codex - added Learn piano-roll note rendering.
+        @author Codex - limited Learn piano-roll note rendering to the displayed window.
         """
 
         assert self._song is not None
+        visible_start, visible_end = self._timeline_bounds()
         min_note, max_note = self._pitch_bounds()
         lane_height = rect.height() / max(1, max_note - min_note + 1)
         for track in self._song.tracks:
@@ -395,6 +677,8 @@ class PianoRollTimeline(QWidget):
             base_color = QColor(track.color)
             is_target_track = track.index == self._target_track_index
             for note in track.notes:
+                if note.end_time < visible_start or note.start_time > visible_end:
+                    continue
                 x1 = self._time_to_x(note.start_time)
                 x2 = max(x1 + 2, self._time_to_x(note.end_time))
                 if x2 < rect.left() or x1 > rect.right():
@@ -440,24 +724,11 @@ class PianoRollTimeline(QWidget):
         for x in (start_x, end_x):
             painter.drawRoundedRect(QRectF(x - 5, rect.top() - 10, 10, 20), 3, 3)
 
-    def _paint_playhead(self, painter: QPainter, rect: QRectF) -> None:
-        """Paint the current practice playhead.
-
-        @author Codex - updated Learn playhead rendering for piano roll.
-        """
-
-        x = self._time_to_x(self._playhead_time)
-        painter.setPen(QPen(QColor("#ffffff"), 2))
-        painter.drawLine(int(x), int(rect.top() - 8), int(x), int(rect.bottom() + 8))
-        painter.setBrush(QColor("#ffffff"))
-        painter.drawEllipse(QPoint(int(x), int(rect.top() - 11)), 4, 4)
-
-
 class LearnView(QWidget):
     """MIDI-driven song-practice screen.
 
     Learn is a study surface, so the view shows a piano-roll timeline and track
-    controls. MIDI parsing, playback rendering, target matching, and live input
+    controls. MIDI parsing, target matching, and live input
     stay behind explicit boundaries.
 
     @author Codex - created first Learn mode screen.
@@ -480,39 +751,55 @@ class LearnView(QWidget):
         self._input = LivePitchInput()
         self._pluck_detector = PluckDetector()
         self._devices: list[AudioDevice] = []
-        self._midi_renderer = FilteredMidiRenderer()
-        self._midi_player = FluidSynthMidiPlayer()
-        self._playback_temp_path: Path | None = None
-        self._midi_playback_started = False
-        self._last_playhead_time = 0.0
         self._latest_detected_notes: tuple[int, ...] = ()
         self._running = False
         self._frame_count = 0
         self._last_readout_at = 0.0
         self._last_frame_dump_at = 0.0
-        self._count_in_seconds = 1.5
 
         self.song_combo = QComboBox()
         self.device_combo = QComboBox()
         self.refresh_button = QPushButton("Refresh Devices")
-        self.start_button = QPushButton("Start Input")
+        self.start_button = QPushButton()
+        self.start_button.setObjectName("inputToggleButton")
+        self.start_button.setAccessibleName("Start input")
+        self.start_button.setToolTip("Start input")
         self.sample_rate_label = QLabel("Sample rate: --")
-        self.mode_combo = QComboBox()
-        self.play_button = QPushButton("Play")
-        self.restart_button = QPushButton("Restart")
-        self.loop_check = QCheckBox("Loop")
-        self.speed_combo = QComboBox()
-        self.count_in_combo = QComboBox()
         self.transpose_spin = QSpinBox()
         self.transpose_spin.setRange(TRANSPOSE_MIN_SEMITONES, TRANSPOSE_MAX_SEMITONES)
         self.transpose_spin.setValue(0)
-        self.transpose_spin.setSuffix(" semitones")
-        self.suggest_transpose_button = QPushButton("Auto-suggest transpose")
+        self.transpose_spin.setSuffix(" st")
+        self.transpose_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.transpose_down_button = QPushButton("-")
+        self.transpose_down_button.setObjectName("transposeStepDown")
+        self.transpose_down_button.setAccessibleName("Transpose down")
+        self.transpose_down_button.setToolTip("Transpose down one semitone")
+        self.transpose_down_button.setFixedSize(38, 36)
+        self.transpose_up_button = QPushButton("+")
+        self.transpose_up_button.setObjectName("transposeStepUp")
+        self.transpose_up_button.setAccessibleName("Transpose up")
+        self.transpose_up_button.setToolTip("Transpose up one semitone")
+        self.transpose_up_button.setFixedSize(38, 36)
+        self.transpose_value_label = QLabel("+0")
+        self.transpose_value_label.setObjectName("transposeValue")
+        self.transpose_value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.transpose_value_label.setFixedSize(62, 36)
         self.transpose_preview_label = QLabel("Transpose: +0 semitones")
-        self.range_warning_label = QLabel("Guitar range: choose a target track.")
+        self.transpose_preview_label.setObjectName("transposePreview")
+        self.lowest_note_label = QLabel("Lowest note: --")
+        self.highest_note_label = QLabel("Highest note: --")
+        self.range_warning_label = QLabel("")
+        self.transpose_panel = QFrame()
+        self.transpose_panel.setObjectName("transposePanel")
         self.back_button = QPushButton("Back")
         self.status_label = QLabel("Choose a MIDI song and target track.")
+        self.timeline_overview = MidiOverviewBar()
         self.timeline = PianoRollTimeline()
+        self.practice_view_button = QPushButton("Target")
+        self.practice_view_button.setCheckable(True)
+        self.practice_view_button.setChecked(True)
+        self.tracks_view_button = QPushButton("Tracks")
+        self.tracks_view_button.setCheckable(True)
         self.track_panel = QFrame()
         self.track_panel.setObjectName("trackPanel")
         self.track_list = QVBoxLayout(self.track_panel)
@@ -525,14 +812,11 @@ class LearnView(QWidget):
         self.detected_label = QLabel("Detected: --")
         self.feedback_label = QLabel(Feedback.WAITING.value)
         self.progress_label = QLabel("0 / 0 targets")
+        self._update_input_button()
 
         self._timer = QTimer(self)
         self._timer.setInterval(16)
         self._timer.timeout.connect(self._update_frame)
-
-        self._practice_timer = QTimer(self)
-        self._practice_timer.setInterval(33)
-        self._practice_timer.timeout.connect(self._tick_practice)
 
         self._build_layout()
         self._apply_style()
@@ -557,13 +841,10 @@ class LearnView(QWidget):
         """Stop resources owned by Learn when leaving the screen.
 
         @author Codex - created Learn screen activation lifecycle.
-        @author Codex - added MIDI playback shutdown for Learn.
+        @author Codex - removed Learn Run Mode playback lifecycle.
         """
 
-        self._practice_timer.stop()
-        self._stop_midi_playback()
         self._controller.pause()
-        self.play_button.setText("Play")
         self.stop_input()
         dump("learn", "deactivate")
 
@@ -581,6 +862,15 @@ class LearnView(QWidget):
 
         @author Codex - created first Learn mode screen.
         @author Codex - replaced Learn layout with piano roll and track panel.
+        @author Codex - moved Learn readouts into the side rail to prioritize the piano roll.
+        @author Codex - added Learn MIDI overview above the piano roll.
+        @author Codex - added a dedicated Learn playhead bar.
+        @author Codex - removed Learn Run Mode controls.
+        @author Codex - added side-rail view switcher for target status versus tracks.
+        @author Codex - compacted song and transpose controls in the Learn toolbar.
+        @author Codex - grouped Learn transpose controls and range readout.
+        @author Codex - replaced visible transpose spinbox with segmented stepper.
+        @author Codex - arranged Learn transpose details as explicit note readouts.
         """
 
         root = QVBoxLayout(self)
@@ -598,80 +888,111 @@ class LearnView(QWidget):
         controls = QFrame()
         controls.setObjectName("panel")
         controls_layout = QGridLayout(controls)
-        controls_layout.setContentsMargins(12, 10, 12, 10)
-        controls_layout.setHorizontalSpacing(8)
-        controls_layout.setVerticalSpacing(8)
-        controls_layout.addWidget(QLabel("Song"), 0, 0)
-        controls_layout.addWidget(self.song_combo, 0, 1, 1, 4)
-        controls_layout.addWidget(QLabel("Input"), 1, 0)
-        controls_layout.addWidget(self.device_combo, 1, 1, 1, 4)
-        controls_layout.addWidget(self.refresh_button, 1, 5)
-        controls_layout.addWidget(self.start_button, 1, 6)
-        controls_layout.addWidget(self.sample_rate_label, 1, 7, 1, 2)
-        controls_layout.addWidget(QLabel("Mode"), 2, 0)
-        controls_layout.addWidget(self.mode_combo, 2, 1)
-        controls_layout.addWidget(self.play_button, 2, 2)
-        controls_layout.addWidget(self.restart_button, 2, 3)
-        controls_layout.addWidget(self.loop_check, 2, 4)
-        controls_layout.addWidget(QLabel("Speed"), 2, 5)
-        controls_layout.addWidget(self.speed_combo, 2, 6)
-        controls_layout.addWidget(QLabel("Count-in"), 2, 7)
-        controls_layout.addWidget(self.count_in_combo, 2, 8)
-        controls_layout.addWidget(QLabel("Transpose"), 3, 0)
-        controls_layout.addWidget(self.transpose_spin, 3, 1)
-        controls_layout.addWidget(self.suggest_transpose_button, 3, 2, 1, 2)
-        controls_layout.addWidget(self.transpose_preview_label, 3, 4, 1, 5)
+        controls_layout.setContentsMargins(10, 8, 10, 8)
+        controls_layout.setHorizontalSpacing(6)
+        controls_layout.setVerticalSpacing(6)
+        controls_layout.addWidget(QLabel("Input"), 0, 0)
+        controls_layout.addWidget(self.device_combo, 0, 1, 1, 4)
+        controls_layout.addWidget(self.refresh_button, 0, 5)
+        controls_layout.addWidget(self.start_button, 0, 6)
+        controls_layout.addWidget(self.sample_rate_label, 0, 7, 1, 2)
+        controls_layout.addWidget(QLabel("Song"), 1, 0)
+        controls_layout.addWidget(self.song_combo, 1, 1, 1, 5)
+        controls_layout.addWidget(self.transpose_panel, 1, 6, 1, 4)
         root.addWidget(controls)
 
         self.status_label.setObjectName("status")
         root.addWidget(self.status_label)
-        self.range_warning_label.setObjectName("status")
-        self.range_warning_label.setWordWrap(True)
-        root.addWidget(self.range_warning_label)
 
-        middle = QHBoxLayout()
-        middle.setSpacing(10)
-        middle.addWidget(self.timeline, 5)
+        transpose_layout = QVBoxLayout(self.transpose_panel)
+        transpose_layout.setContentsMargins(10, 8, 10, 8)
+        transpose_layout.setSpacing(4)
+        transpose_title = QLabel("Transpose")
+        transpose_title.setObjectName("transposeTitle")
+        transpose_layout.addWidget(transpose_title)
+        self.transpose_spin.setVisible(False)
+        transpose_steps = QHBoxLayout()
+        transpose_steps.setContentsMargins(0, 0, 0, 0)
+        transpose_steps.setSpacing(6)
+        transpose_steps.addWidget(self.transpose_down_button)
+        transpose_steps.addWidget(self.transpose_up_button)
+        transpose_steps.addWidget(self.transpose_value_label)
+        transpose_steps.addStretch(1)
+        transpose_layout.addLayout(transpose_steps)
+        transpose_layout.addWidget(self.lowest_note_label)
+        transpose_layout.addWidget(self.highest_note_label)
+        transpose_layout.addWidget(self.range_warning_label)
 
-        side = QFrame()
-        side.setObjectName("infoPanel")
-        side.setMinimumWidth(300)
+        side = QWidget()
+        side.setMinimumWidth(340)
+        side.setMaximumWidth(380)
+        side.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(12, 12, 12, 12)
         side_layout.setSpacing(8)
-        track_title = QLabel("Tracks")
-        track_title.setObjectName("sectionTitle")
-        side_layout.addWidget(track_title)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setWidget(self.track_panel)
-        side_layout.addWidget(scroll, 1)
-        middle.addWidget(side, 2)
-        root.addLayout(middle, 6)
 
-        bottom = QHBoxLayout()
-        bottom.setSpacing(10)
+        switcher = QHBoxLayout()
+        switcher.setSpacing(6)
+        switcher.addWidget(self.practice_view_button)
+        switcher.addWidget(self.tracks_view_button)
+        side_layout.addLayout(switcher)
+
         target_panel = self._info_panel("Current Target")
         target_panel.layout().addWidget(self.current_target_label)
         target_panel.layout().addWidget(self.expected_label)
-        target_panel.layout().addStretch(1)
 
         feedback_panel = self._info_panel("Feedback")
         feedback_panel.layout().addWidget(self.feedback_label)
         feedback_panel.layout().addWidget(self.detected_label)
         feedback_panel.layout().addWidget(self.progress_label)
-        feedback_panel.layout().addStretch(1)
 
-        bottom.addWidget(target_panel, 2)
-        bottom.addWidget(feedback_panel, 1)
-        root.addLayout(bottom, 2)
+        practice_panel = QWidget()
+        practice_layout = QVBoxLayout(practice_panel)
+        practice_layout.setContentsMargins(0, 0, 0, 0)
+        practice_layout.setSpacing(8)
+        practice_layout.addWidget(target_panel)
+        practice_layout.addWidget(feedback_panel)
+        practice_layout.addStretch(1)
+
+        tracks_panel = QWidget()
+        tracks_layout = QVBoxLayout(tracks_panel)
+        tracks_layout.setContentsMargins(0, 0, 0, 0)
+        tracks_layout.setSpacing(8)
+        track_title = QLabel("Tracks")
+        track_title.setObjectName("sectionTitle")
+        tracks_layout.addWidget(track_title)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(self.track_panel)
+        tracks_layout.addWidget(scroll, 1)
+
+        self.side_stack = QStackedWidget()
+        self.side_stack.addWidget(practice_panel)
+        self.side_stack.addWidget(tracks_panel)
+        side_layout.addWidget(self.side_stack, 1)
+
+        timeline_column = QVBoxLayout()
+        timeline_column.setSpacing(8)
+        timeline_column.addWidget(self.timeline_overview)
+        timeline_column.addWidget(self.timeline, 1)
+
+        middle = QHBoxLayout()
+        middle.setSpacing(10)
+        middle.addLayout(timeline_column, 1)
+        middle.addWidget(side)
+        root.addLayout(middle, 10)
 
         self.current_target_label.setObjectName("targetName")
         self.expected_label.setObjectName("monoText")
         self.expected_label.setWordWrap(True)
-        self.transpose_preview_label.setObjectName("monoText")
         self.transpose_preview_label.setWordWrap(True)
+        self.lowest_note_label.setObjectName("rangeText")
+        self.lowest_note_label.setProperty("rangeState", "normal")
+        self.highest_note_label.setObjectName("rangeText")
+        self.highest_note_label.setProperty("rangeState", "normal")
+        self.range_warning_label.setObjectName("rangeText")
+        self.range_warning_label.setWordWrap(True)
         self.detected_label.setObjectName("monoText")
         self.detected_label.setWordWrap(True)
         self.feedback_label.setObjectName("feedback")
@@ -681,11 +1002,12 @@ class LearnView(QWidget):
         """Create a titled information panel for Learn status.
 
         @author Codex - created first Learn mode screen.
+        @author Codex - made Learn status panels compact inside the side rail.
         """
 
         panel = QFrame()
         panel.setObjectName("infoPanel")
-        panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(8)
@@ -699,21 +1021,94 @@ class LearnView(QWidget):
 
         @author Codex - created first Learn mode screen.
         @author Codex - connected Learn piano-roll track controls.
+        @author Codex - connected Learn MIDI overview viewport control.
+        @author Codex - connected explicit Learn transpose step buttons.
         """
 
         self.back_button.clicked.connect(self._go_back)
         self.song_combo.currentIndexChanged.connect(self._select_song)
         self.refresh_button.clicked.connect(self.refresh_devices)
         self.start_button.clicked.connect(self.start_input)
-        self.mode_combo.currentIndexChanged.connect(self._set_mode)
-        self.play_button.clicked.connect(self._toggle_play)
-        self.restart_button.clicked.connect(self._restart)
-        self.loop_check.toggled.connect(self._set_loop)
-        self.speed_combo.currentIndexChanged.connect(self._set_speed)
-        self.count_in_combo.currentIndexChanged.connect(self._set_count_in)
+        self.practice_view_button.clicked.connect(self._show_practice_panel)
+        self.tracks_view_button.clicked.connect(self._show_tracks_panel)
         self.transpose_spin.valueChanged.connect(self._set_transpose)
-        self.suggest_transpose_button.clicked.connect(self._suggest_transpose)
+        self.transpose_down_button.clicked.connect(self._decrement_transpose)
+        self.transpose_up_button.clicked.connect(self._increment_transpose)
+        self.timeline_overview.display_window_changed.connect(self._set_display_window)
         self.timeline.region_changed.connect(self._set_region)
+
+    def _decrement_transpose(self) -> None:
+        """Move the Learn chart transpose down by one semitone.
+
+        The buttons are a compact UI adapter over the same bounded transpose
+        policy as the spin box; the practice chart remains selected track plus
+        clamped semitone offset.
+
+        @author Codex - added explicit Learn transpose decrement control.
+        """
+
+        self.transpose_spin.setValue(clamp_transpose(self._transpose_semitones - 1))
+
+    def _increment_transpose(self) -> None:
+        """Move the Learn chart transpose up by one semitone.
+
+        The buttons are a compact UI adapter over the same bounded transpose
+        policy as the spin box; the practice chart remains selected track plus
+        clamped semitone offset.
+
+        @author Codex - added explicit Learn transpose increment control.
+        """
+
+        self.transpose_spin.setValue(clamp_transpose(self._transpose_semitones + 1))
+
+    def _show_practice_panel(self) -> None:
+        """Show target and feedback readouts in the side rail.
+
+        The choice is purely a workspace layout concern. It does not alter the
+        selected MIDI track or Learn practice state.
+
+        @author Codex - added side-rail view switcher for target status versus tracks.
+        """
+
+        self.side_stack.setCurrentIndex(0)
+        self.practice_view_button.setChecked(True)
+        self.tracks_view_button.setChecked(False)
+
+    def _show_tracks_panel(self) -> None:
+        """Show MIDI track controls in the side rail.
+
+        Track controls are kept one click away so target feedback has enough
+        space while practicing without hiding track selection entirely.
+
+        @author Codex - added side-rail view switcher for target status versus tracks.
+        """
+
+        self.side_stack.setCurrentIndex(1)
+        self.practice_view_button.setChecked(False)
+        self.tracks_view_button.setChecked(True)
+
+    def _update_input_button(self) -> None:
+        """Render live input as record/stop transport symbology.
+
+        A red record circle means start capture; a square means stop. Using a
+        play triangle here would suggest MIDI playback, while this control owns
+        the microphone/input stream.
+
+        @author Codex - replaced Learn input text with standard capture symbols.
+        """
+
+        if self._running:
+            self.start_button.setText("")
+            self.start_button.setAccessibleName("Stop input")
+            self.start_button.setToolTip("Stop input")
+            self.start_button.setProperty("inputState", "running")
+        else:
+            self.start_button.setText("")
+            self.start_button.setAccessibleName("Start input")
+            self.start_button.setToolTip("Start input")
+            self.start_button.setProperty("inputState", "stopped")
+        self.start_button.style().unpolish(self.start_button)
+        self.start_button.style().polish(self.start_button)
 
     def refresh_devices(self) -> None:
         """Reload available input devices for Learn's live detector.
@@ -779,7 +1174,7 @@ class LearnView(QWidget):
             return
         self._running = True
         self._pluck_detector.reset()
-        self.start_button.setText("Stop Input")
+        self._update_input_button()
         self.sample_rate_label.setText(f"Sample rate: {self._input.sample_rate} Hz")
         self.status_label.setText("Listening.")
         self._frame_count = 0
@@ -796,7 +1191,7 @@ class LearnView(QWidget):
         self._timer.stop()
         self._input.stop()
         self._running = False
-        self.start_button.setText("Start Input")
+        self._update_input_button()
         self.status_label.setText("Stopped.")
         dump("learn", "input_stopped")
 
@@ -841,9 +1236,11 @@ class LearnView(QWidget):
 
         @author Codex - created explicit Learn track-choice behavior.
         @author Codex - replaced track combo with piano-roll track panel.
+        @author Codex - reset Learn MIDI overview to the full loaded song.
+        @author Codex - selected an obvious guitar track by default for multi-track MIDI.
+        @author Codex - reset the dedicated Learn playhead bar on song changes.
         """
 
-        self._stop_midi_playback()
         song = self.song_combo.itemData(index)
         self._current_song = song if isinstance(song, LearnSong) else None
         self._target_track = None
@@ -852,6 +1249,7 @@ class LearnView(QWidget):
 
         if self._current_song is None:
             self._controller.clear_section()
+            self.timeline_overview.set_song(None)
             self.timeline.set_song(None)
             self.timeline.set_transpose(self._transpose_semitones)
             self._update_transpose_readouts()
@@ -863,14 +1261,19 @@ class LearnView(QWidget):
             self._track_states[track.index] = TrackUiState()
             self._add_track_row(track)
         self.track_list.addStretch(1)
+        display_window = PracticeRegion(self._current_song.start_time, self._current_song.end_time)
+        self.timeline_overview.set_song(self._current_song, display_window)
         self.timeline.set_song(
             self._current_song,
-            PracticeRegion(self._current_song.start_time, self._current_song.end_time),
+            display_window,
         )
         self.timeline.set_transpose(self._transpose_semitones)
         self.timeline.set_visible_tracks(self._visible_track_indexes())
 
-        if self._current_song.requires_track_choice:
+        default_track = self._default_target_track()
+        if default_track is not None:
+            self._select_target_track(default_track.index)
+        elif self._current_song.requires_track_choice:
             self._controller.clear_section()
             self.status_label.setText("Choose a target track. Visibility and audibility can be changed independently.")
         elif self._current_song.tracks:
@@ -936,11 +1339,6 @@ class LearnView(QWidget):
         visible_check = QCheckBox("Visible")
         visible_check.setChecked(True)
         visible_check.toggled.connect(lambda checked, index=track.index: self._set_track_visible(index, checked))
-        audible_check = QCheckBox("Audible")
-        audible_check.setChecked(True)
-        audible_check.toggled.connect(lambda checked, index=track.index: self._set_track_audible(index, checked))
-        solo_check = QCheckBox("Solo")
-        solo_check.toggled.connect(lambda checked, index=track.index: self._set_track_solo(index, checked))
 
         title = QLabel(track.name)
         title.setObjectName("trackName")
@@ -955,10 +1353,29 @@ class LearnView(QWidget):
         layout.addWidget(details, 1, 1, 1, 3)
         layout.addWidget(target_radio, 2, 0, 1, 2)
         layout.addWidget(visible_check, 3, 0, 1, 2)
-        layout.addWidget(audible_check, 3, 2)
-        layout.addWidget(solo_check, 3, 3)
         self.track_list.addWidget(row)
         self._track_rows[track.index] = row
+
+    def _default_target_track(self) -> MidiTrackOption | None:
+        """Return a clear guitar target candidate for multi-track MIDI.
+
+        Multi-track files should not default to the first arbitrary instrument,
+        but a track explicitly named as guitar is strong enough UI context to
+        avoid making guitar MIDIs feel broken on load.
+
+        @author Codex - selected an obvious guitar track by default for multi-track MIDI.
+        """
+
+        if self._current_song is None or not self._current_song.requires_track_choice:
+            return None
+        return next(
+            (
+                track
+                for track in self._current_song.tracks
+                if "guitar" in " ".join((track.name, *track.instrument_labels)).casefold()
+            ),
+            None,
+        )
 
     def _track_details(self, track: MidiTrackOption) -> str:
         """Return compact metadata shown in a track row.
@@ -1008,7 +1425,7 @@ class LearnView(QWidget):
     def _select_target_track(self, track_index: int) -> None:
         """Load one track as the only source of Learn targets.
 
-        Other tracks remain available as visible or audible context. The
+        Other tracks remain available as visible context. The
         section passed to the controller uses song-wide bounds so region handles
         can select accompaniment context wider than the target track's notes.
 
@@ -1018,12 +1435,10 @@ class LearnView(QWidget):
         track = self._find_track(track_index)
         if track is None or self._current_song is None:
             self._controller.clear_section()
-            self.play_button.setEnabled(False)
             self.status_label.setText("Choose a target track to practice.")
             self._render_state()
             return
 
-        self._stop_midi_playback()
         self._target_track = track
         radio = self._target_radios.get(track.index)
         if radio is not None and not radio.isChecked():
@@ -1032,8 +1447,7 @@ class LearnView(QWidget):
         state = self._controller.set_section(section)
         self.timeline.set_target_track(track.index)
         self.timeline.set_transpose(self._transpose_semitones)
-        self.play_button.setEnabled(bool(track.section.targets))
-        self.status_label.setText(f"Target track: {track.name}. Context tracks can stay visible or audible.")
+        self.status_label.setText(f"Target track: {track.name}. Context tracks can stay visible.")
         dump(
             "learn",
             "target_track_selected",
@@ -1069,9 +1483,10 @@ class LearnView(QWidget):
         )
 
     def _set_track_visible(self, track_index: int, visible: bool) -> None:
-        """Apply timeline visibility without changing playback audibility.
+        """Apply timeline visibility.
 
         @author Codex - added Learn track visibility behavior.
+        @author Codex - removed Learn Run Mode playback controls.
         """
 
         state = self._track_states.get(track_index)
@@ -1081,32 +1496,6 @@ class LearnView(QWidget):
         self.timeline.set_visible_tracks(self._visible_track_indexes())
         dump("learn", "track_visible_changed", track_index=track_index, visible=visible)
 
-    def _set_track_audible(self, track_index: int, audible: bool) -> None:
-        """Apply playback audibility without changing piano-roll visibility.
-
-        @author Codex - added Learn track audibility behavior.
-        """
-
-        state = self._track_states.get(track_index)
-        if state is None:
-            return
-        state.audible = bool(audible)
-        dump("learn", "track_audible_changed", track_index=track_index, audible=audible)
-        self._restart_midi_playback_if_running()
-
-    def _set_track_solo(self, track_index: int, solo: bool) -> None:
-        """Apply solo playback state for one track.
-
-        @author Codex - added Learn track solo behavior.
-        """
-
-        state = self._track_states.get(track_index)
-        if state is None:
-            return
-        state.solo = bool(solo)
-        dump("learn", "track_solo_changed", track_index=track_index, solo=solo)
-        self._restart_midi_playback_if_running()
-
     def _visible_track_indexes(self) -> frozenset[int]:
         """Return track indexes currently visible on the piano roll.
 
@@ -1115,128 +1504,22 @@ class LearnView(QWidget):
 
         return frozenset(index for index, state in self._track_states.items() if state.visible)
 
-    def _audible_track_indexes(self) -> frozenset[int]:
-        """Return track indexes currently included in MIDI playback.
-
-        Solo narrows the audible set, but muted tracks remain excluded even
-        when soloed. Visibility is intentionally ignored.
-
-        @author Codex - added Learn track audibility behavior.
-        """
-
-        soloed = {index for index, state in self._track_states.items() if state.solo}
-        candidates = soloed if soloed else set(self._track_states)
-        return frozenset(index for index in candidates if self._track_states[index].audible)
-
-    def _set_mode(self, index: int) -> None:
-        """Apply the selected Learn timing mode.
-
-        @author Codex - created Learn mode UI control.
-        @author Codex - added MIDI playback mode switching.
-        """
-
-        mode = self.mode_combo.itemData(index)
-        if isinstance(mode, LearnMode):
-            self._stop_midi_playback()
-            self.play_button.setText("Play")
-            self._practice_timer.stop()
-            state = self._controller.set_mode(mode)
-            dump("learn", "mode_changed", mode=mode.value, state=_state_dump(state))
-            self._render_state(state)
-
-    def _toggle_play(self) -> None:
-        """Start or pause Learn practice.
-
-        @author Codex - created Learn play/pause UI control.
-        @author Codex - added Run Mode MIDI playback lifecycle.
-        """
-
-        state = self._controller.snapshot()
-        if state.is_running:
-            self._practice_timer.stop()
-            self._stop_midi_playback()
-            self.play_button.setText("Play")
-            paused = self._controller.pause()
-            dump("learn", "practice_paused", state=_state_dump(paused))
-            self._render_state(paused)
-            return
-        state = self._controller.start(time.monotonic())
-        if state.selected_count:
-            self._practice_timer.start()
-            self.play_button.setText("Pause")
-            self._start_midi_playback_if_ready(state)
-        dump("learn", "practice_started", state=_state_dump(state))
-        self._render_state(state)
-
-    def _restart(self) -> None:
-        """Restart the current practice region.
-
-        @author Codex - created Learn restart UI control.
-        @author Codex - added MIDI playback restart handling.
-        """
-
-        self._practice_timer.stop()
-        self._stop_midi_playback()
-        self.play_button.setText("Play")
-        state = self._controller.restart()
-        dump("learn", "practice_restarted", state=_state_dump(state))
-        self._render_state(state)
-
-    def _set_loop(self, enabled: bool) -> None:
-        """Apply the loop-region toggle.
-
-        @author Codex - created Learn loop UI control.
-        """
-
-        state = self._controller.set_loop_enabled(enabled)
-        dump("learn", "loop_changed", enabled=enabled)
-        self._render_state(state)
-
-    def _set_speed(self, index: int) -> None:
-        """Apply the Run Mode speed selector.
-
-        @author Codex - created Learn speed UI control.
-        @author Codex - added MIDI playback speed rerendering.
-        """
-
-        speed = self.speed_combo.itemData(index)
-        if speed is not None:
-            state = self._controller.set_speed(float(speed))
-            dump("learn", "speed_changed", speed=float(speed))
-            self._render_state(state)
-            self._restart_midi_playback_if_running()
-
-    def _set_count_in(self, index: int) -> None:
-        """Apply the Run Mode count-in selector.
-
-        @author Codex - created Learn count-in UI control.
-        """
-
-        seconds = self.count_in_combo.itemData(index)
-        if seconds is not None:
-            self._count_in_seconds = float(seconds)
-            state = self._controller.set_count_in(self._count_in_seconds)
-            dump("learn", "count_in_changed", seconds=self._count_in_seconds)
-            self._render_state(state)
-
     def _set_transpose(self, semitones: int) -> None:
         """Apply user semitone transposition to the Learn chart only.
 
         This rebuilds expected targets from the raw selected track so repeated
         changes never stack offsets onto already-transposed notes. MIDI source
-        data, playback rendering, note timing, durations, and selected region
+        data, note timing, durations, and selected region
         are left untouched.
 
         @author Codex - added Learn transpose UI behavior.
+        @author Codex - removed Learn Run Mode playback controls.
         """
 
         self._transpose_semitones = clamp_transpose(semitones)
         self.timeline.set_transpose(self._transpose_semitones)
         state = None
         if self._target_track is not None:
-            self._practice_timer.stop()
-            self._stop_midi_playback()
-            self.play_button.setText("Play")
             state = self._controller.set_section(
                 self._section_for_target_track(self._target_track),
                 preserve_region=True,
@@ -1253,138 +1536,33 @@ class LearnView(QWidget):
         self._update_transpose_readouts()
         self._render_state(state)
 
-    def _suggest_transpose(self) -> None:
-        """Report a transpose suggestion without applying it.
+    def _set_display_window(self, start_time: float, end_time: float) -> None:
+        """Apply the overview handles as the piano-roll viewport.
 
-        @author Codex - added Learn transpose suggestion control.
+        This handler intentionally avoids ``LearnController``. The overview bar
+        answers "what part of the MIDI am I looking at?", while ``_set_region``
+        answers "what part am I practicing?".
+
+        @author Codex - added Learn MIDI overview viewport control.
         """
 
-        if self._target_track is None:
-            self.status_label.setText("Choose a target track before requesting a transpose suggestion.")
-            dump("learn", "transpose_suggestion_blocked", reason="no_target_track")
+        if self._current_song is None:
             return
-        suggestion = auto_suggest_transpose(self._target_track.section.targets)
-        original_range = note_range_for_targets(self._target_track.section.targets, original=True)
-        if suggestion is None or original_range is None:
-            self.status_label.setText("No transpose suggestion for this track.")
-            dump("learn", "transpose_suggestion", suggestion=None)
-            return
-        self.status_label.setText(
-            f"Lowest note: {midi_note_name(original_range[0])}. "
-            f"Suggested transpose: {self._signed_transpose(suggestion)} semitones."
-        )
-        dump(
-            "learn",
-            "transpose_suggestion",
-            lowest=midi_note_name(original_range[0]),
-            suggestion=suggestion,
-        )
+        self.timeline_overview.set_display_window(start_time, end_time)
+        self.timeline.set_display_window(start_time, end_time)
+        dump("learn", "display_window_changed", start=start_time, end=end_time)
 
     def _set_region(self, start_time: float, end_time: float) -> None:
         """Apply a piano-roll handle change as the practice region.
 
         @author Codex - created Learn timeline-to-controller wiring.
         @author Codex - updated region wiring for piano roll.
+        @author Codex - removed Learn Run Mode playback controls.
         """
 
-        self._practice_timer.stop()
-        self._stop_midi_playback()
-        self.play_button.setText("Play")
         state = self._controller.set_region(start_time, end_time)
         dump("learn", "region_changed", start=start_time, end=end_time, state=_state_dump(state))
         self._render_state(state)
-
-    def _tick_practice(self) -> None:
-        """Refresh playhead and feedback from the Learn controller.
-
-        @author Codex - created Learn periodic UI refresh.
-        @author Codex - added Run Mode MIDI playback synchronization.
-        """
-
-        previous_state = self._controller.snapshot()
-        state = self._controller.update(time.monotonic())
-        if previous_state.is_counting_in and not state.is_counting_in:
-            self._start_midi_playback_if_ready(state)
-        if state.is_running and state.playhead_time + 0.05 < self._last_playhead_time:
-            self._restart_midi_playback_if_running()
-        self._last_playhead_time = state.playhead_time
-        if not state.is_running:
-            self._practice_timer.stop()
-            self._stop_midi_playback()
-            self.play_button.setText("Play")
-        self._render_state(state)
-
-    def _start_midi_playback_if_ready(self, state: object) -> None:
-        """Start filtered MIDI playback for Run Mode when possible.
-
-        @author Codex - added Learn filtered MIDI playback lifecycle.
-        """
-
-        if state.mode != LearnMode.RUN or state.is_counting_in or not state.is_running:
-            return
-        if self._midi_playback_started:
-            return
-        if self._current_song is None or self._current_song.path is None:
-            return
-        audible_tracks = self._audible_track_indexes()
-        if not audible_tracks:
-            self.status_label.setText("No audible MIDI tracks selected. Practice continues silently.")
-            dump("learn", "midi_playback_skipped", reason="no_audible_tracks")
-            return
-
-        try:
-            fd, temp_name = tempfile.mkstemp(prefix="learn-", suffix=".mid")
-            os.close(fd)
-            output_path = Path(temp_name)
-            self._midi_renderer.render(
-                FilteredMidiRenderRequest(
-                    source_path=self._current_song.path,
-                    output_path=output_path,
-                    track_indexes=audible_tracks,
-                    start_time=self._controller.region.start_time,
-                    end_time=self._controller.region.end_time,
-                    speed=self.speed_combo.currentData() or 1.0,
-                )
-            )
-            self._midi_player.play(output_path)
-        except Exception as exc:
-            self.status_label.setText(f"MIDI playback unavailable: {exc}")
-            self._midi_playback_started = False
-            dump("learn", "midi_playback_failed", error=str(exc))
-            return
-        self._playback_temp_path = output_path
-        self._midi_playback_started = True
-        dump("learn", "midi_playback_started", path=output_path, audible_tracks=audible_tracks)
-
-    def _stop_midi_playback(self) -> None:
-        """Stop MIDI playback and forget the rendered temporary file.
-
-        @author Codex - added Learn filtered MIDI playback lifecycle.
-        """
-
-        temp_path = self._playback_temp_path
-        self._midi_player.stop()
-        self._midi_playback_started = False
-        self._playback_temp_path = None
-        if temp_path is not None:
-            try:
-                temp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-        if temp_path is not None:
-            dump("learn", "midi_playback_stopped", path=temp_path)
-
-    def _restart_midi_playback_if_running(self) -> None:
-        """Restart playback if Run Mode currently owns a MIDI process.
-
-        @author Codex - added Learn filtered MIDI playback lifecycle.
-        """
-
-        state = self._controller.snapshot()
-        was_playing = self._midi_playback_started
-        self._stop_midi_playback()
-        if was_playing:
-            self._start_midi_playback_if_ready(state)
 
     def _update_frame(self) -> None:
         """Read the newest live input frame, matching Sandbox's flow.
@@ -1407,6 +1585,7 @@ class LearnView(QWidget):
         @author Codex - created Learn detector integration.
         @author Codex - aligned Learn frame rendering with Sandbox.
         @author Codex - added realtime Learn detected-note readout.
+        @author Codex - removed Learn Run Mode play/pause gating.
         """
 
         self._remember_live_frame_note(frame)
@@ -1427,13 +1606,13 @@ class LearnView(QWidget):
                 likely_peak=_peak_dump(frame.likely_fundamental),
                 dominant_peak=_peak_dump(frame.dominant_peak),
             )
-            if state.is_running:
+            if state.current_target is not None:
                 state = self._controller.process_detected_note(pluck.midi, confidence=pluck.confidence, now=time.monotonic())
                 dump("learn", "match_result", state=_state_dump(state))
                 self.status_label.setText(f"Detected {pluck.note_name}.")
                 self._render_state(state)
             else:
-                self.status_label.setText(f"Detected {pluck.note_name} while paused.")
+                self.status_label.setText(f"Detected {pluck.note_name}. Choose a target track to practice.")
                 self._render_state()
         else:
             self.status_label.setText("Listening.")
@@ -1490,10 +1669,11 @@ class LearnView(QWidget):
     def _remember_detected_note(self, midi_note: int) -> None:
         """Keep a live detected-note readout independent from practice state.
 
-        The controller must not advance targets while Learn is paused, but the
-        screen still needs to prove that live input is reaching the detector.
+        The screen needs to prove that live input is reaching the detector even
+        before a target track is selected.
 
         @author Codex - added Learn paused detection readout.
+        @author Codex - removed Learn Run Mode play/pause gating.
         """
 
         note = int(midi_note)
@@ -1505,17 +1685,16 @@ class LearnView(QWidget):
 
         @author Codex - created Learn UI state rendering.
         @author Codex - updated Learn UI rendering for piano roll.
+        @author Codex - removed Learn Run Mode HUD state.
         """
 
         state = state or self._controller.snapshot()
         self.timeline.set_state(
             region=self._controller.region,
-            playhead_time=state.playhead_time,
             current_target=state.current_target,
             passed_indexes=state.passed_target_indexes,
             missed_indexes=state.missed_target_indexes,
         )
-        self.play_button.setEnabled(state.selected_count > 0)
         if state.current_target is None:
             self.current_target_label.setText("--")
             self.expected_label.setText("Choose a target track to generate Learn targets.")
@@ -1529,10 +1708,7 @@ class LearnView(QWidget):
             f"{state.passed_count} / {state.selected_count} passed"
             + (f" | {state.missed_count} miss" if state.missed_count == 1 else f" | {state.missed_count} misses")
         )
-        if state.is_counting_in:
-            self.feedback_label.setText(self._count_in_text(state.count_in_remaining))
-        else:
-            self.feedback_label.setText(state.feedback.value)
+        self.feedback_label.setText(state.feedback.value)
         self._set_feedback_color(state.feedback)
         self._update_transpose_readouts()
 
@@ -1580,54 +1756,65 @@ class LearnView(QWidget):
         """Refresh transpose preview and guitar-range diagnostics.
 
         @author Codex - added Learn transpose preview and range warnings.
+        @author Codex - compacted Learn transpose preview text for the toolbar.
+        @author Codex - refreshed segmented transpose stepper value.
         """
 
         signed = self._signed_transpose(self._transpose_semitones)
+        self.transpose_value_label.setText(signed)
         if self._target_track is None:
-            self.transpose_preview_label.setText(f"Transpose: {signed} semitones")
-            self.range_warning_label.setText("Guitar range: choose a target track.")
+            self.transpose_preview_label.setText(f"Transpose: {signed} st")
+            self.lowest_note_label.setText("Lowest note: --")
+            self.highest_note_label.setText("Highest note: --")
+            self._set_range_label_state(self.lowest_note_label, warning=False)
+            self._set_range_label_state(self.highest_note_label, warning=False)
+            self.range_warning_label.setText("")
             return
 
         original_range = note_range_for_targets(self._target_track.section.targets, original=True)
         transposed_targets = apply_transpose(self._target_track.section.targets, self._transpose_semitones)
         transposed_range = note_range_for_targets(transposed_targets)
         if original_range is None or transposed_range is None:
-            self.transpose_preview_label.setText(f"Transpose: {signed} semitones")
-            self.range_warning_label.setText("Guitar range: no target notes.")
+            self.transpose_preview_label.setText(f"Transpose: {signed} st")
+            self.lowest_note_label.setText("Lowest note: --")
+            self.highest_note_label.setText("Highest note: --")
+            self._set_range_label_state(self.lowest_note_label, warning=False)
+            self._set_range_label_state(self.highest_note_label, warning=False)
+            self.range_warning_label.setText("")
             return
 
         if original_range[0] == original_range[1]:
             preview = (
-                f"Transpose: {signed} semitones\n"
+                f"Transpose: {signed} st | "
                 f"{midi_note_name(original_range[0])} -> {midi_note_name(transposed_range[0])}"
             )
         else:
             preview = (
-                f"Transpose: {signed} semitones\n"
-                f"Lowest note: {midi_note_name(original_range[0])} -> {midi_note_name(transposed_range[0])}\n"
-                f"Highest note: {midi_note_name(original_range[1])} -> {midi_note_name(transposed_range[1])}"
+                f"Range: {midi_note_name(original_range[0])}-{midi_note_name(original_range[1])}"
+                f" -> {midi_note_name(transposed_range[0])}-{midi_note_name(transposed_range[1])}"
             )
         self.transpose_preview_label.setText(preview)
+        self.lowest_note_label.setText(f"Lowest note: {midi_note_name(transposed_range[0])}")
+        self.highest_note_label.setText(f"Highest note: {midi_note_name(transposed_range[1])}")
 
         validation = validate_guitar_range(transposed_targets)
-        if validation.has_below_range_notes:
-            self.range_warning_label.setText(
-                "Warning: chart contains notes below standard guitar range.\n"
-                f"Lowest note: {midi_note_name(validation.lowest_note)}\n"
-                "Possible causes: wrong track, bass track, alternate tuning, or transposed MIDI."
-            )
-            return
-        if validation.has_above_range_notes:
-            self.range_warning_label.setText(
-                "Warning: chart contains notes above the configured guitar range.\n"
-                f"Highest note: {midi_note_name(validation.highest_note)}"
-            )
-            return
-        self.range_warning_label.setText(
-            "Guitar range: OK. "
-            f"Lowest note: {midi_note_name(original_range[0])} -> {midi_note_name(transposed_range[0])}. "
-            f"Standard low limit: {midi_note_name(STANDARD_GUITAR_LOW_MIDI)}."
-        )
+        self._set_range_label_state(self.lowest_note_label, warning=validation.has_below_range_notes)
+        self._set_range_label_state(self.highest_note_label, warning=validation.has_above_range_notes)
+        self.range_warning_label.setText("")
+
+    def _set_range_label_state(self, label: QLabel, *, warning: bool) -> None:
+        """Render a transpose range readout as normal or out-of-range.
+
+        Learn keeps the guitar-range policy in ``validate_guitar_range``. The
+        Qt adapter only maps that result to a compact visual warning so the
+        range section stays scannable while practicing.
+
+        @author Codex - rendered transpose range warnings as label state.
+        """
+
+        label.setProperty("rangeState", "warning" if warning else "normal")
+        label.style().unpolish(label)
+        label.style().polish(label)
 
     def _range_text(self, note_range: tuple[int, int] | None) -> str:
         """Return a compact note range for track metadata.
@@ -1650,18 +1837,6 @@ class LearnView(QWidget):
 
         value = int(semitones)
         return f"+{value}" if value > 0 else str(value)
-
-    def _count_in_text(self, remaining_seconds: float) -> str:
-        """Return count-in text for Run Mode.
-
-        @author Codex - created Learn count-in rendering.
-        @author Codex - removed performance-mode wording from Learn count-in.
-        """
-
-        if self._count_in_seconds <= 0:
-            return "GO"
-        beat = max(1, min(3, math.ceil(remaining_seconds / max(self._count_in_seconds / 3.0, 0.001))))
-        return f"{beat}..."
 
     def _set_feedback_color(self, feedback: Feedback) -> None:
         """Style the feedback readout for the active state.
@@ -1691,18 +1866,11 @@ class LearnView(QWidget):
 
         @author Codex - created first Learn mode screen.
         @author Codex - added piano-roll and track panel styling.
+        @author Codex - removed Learn Run Mode controls.
+        @author Codex - tightened Learn toolbar control spacing.
+        @author Codex - styled Learn transpose as a compact grouped control.
+        @author Codex - styled Learn transpose segmented stepper model.
         """
-
-        self.mode_combo.addItem("Wait Mode", LearnMode.WAIT)
-        self.mode_combo.addItem("Run Mode", LearnMode.RUN)
-        self.speed_combo.addItem("50%", 0.50)
-        self.speed_combo.addItem("75%", 0.75)
-        self.speed_combo.addItem("100%", 1.00)
-        self.speed_combo.setCurrentIndex(2)
-        self.count_in_combo.addItem("Off", 0.0)
-        self.count_in_combo.addItem("1.5s", 1.5)
-        self.count_in_combo.addItem("3s", 3.0)
-        self.count_in_combo.setCurrentIndex(1)
 
         self.setStyleSheet(
             """
@@ -1725,6 +1893,22 @@ class LearnView(QWidget):
             #trackPanel {
                 border: 0;
             }
+            #transposePanel {
+                background: #181818;
+                border: 1px solid #303030;
+                border-radius: 8px;
+            }
+            #transposeTitle {
+                background: transparent;
+                color: #b8b8b8;
+                font-weight: 800;
+            }
+            #transposePreview {
+                background: transparent;
+                color: #d8e2ef;
+                font-family: JetBrains Mono, Consolas, monospace;
+                font-size: 14px;
+            }
             #trackRow {
                 background: #181818;
                 border: 1px solid #303030;
@@ -1745,15 +1929,73 @@ class LearnView(QWidget):
             #status {
                 color: #b8c7dc;
             }
-            QPushButton, QComboBox {
+            QPushButton, QComboBox, QSpinBox {
                 background: #181818;
                 border: 1px solid #333333;
                 border-radius: 6px;
                 color: #f5f5f5;
-                padding: 7px 9px;
+                padding: 5px 8px;
             }
-            QPushButton:hover, QComboBox:hover {
+            QPushButton:hover, QComboBox:hover, QSpinBox:hover {
                 border-color: #ff4d4d;
+            }
+            QPushButton:checked {
+                background: #2a1b1b;
+                border-color: #ff4d4d;
+            }
+            #inputToggleButton {
+                min-width: 34px;
+                max-width: 34px;
+                min-height: 34px;
+                max-height: 34px;
+                border-radius: 17px;
+                padding: 0;
+                background: #ff3b30;
+                border: 0;
+            }
+            #inputToggleButton:hover {
+                background: #ff5a52;
+                border: 0;
+            }
+            #inputToggleButton[inputState="running"] {
+                border-radius: 4px;
+                background: #f5f5f5;
+                border: 0;
+            }
+            #inputToggleButton[inputState="running"]:hover {
+                background: #ffffff;
+                border: 0;
+            }
+            #transposeStepDown, #transposeStepUp {
+                min-width: 38px;
+                max-width: 38px;
+                min-height: 36px;
+                max-height: 36px;
+                border-radius: 7px;
+                padding: 0;
+                background: #1f1f1f;
+                border: 1px solid #333333;
+                color: #ffffff;
+                font-size: 21px;
+                font-weight: 900;
+                text-align: center;
+            }
+            #transposeStepDown:hover, #transposeStepUp:hover {
+                background: #ff3b30;
+                border-color: #ff3b30;
+            }
+            #transposeValue {
+                min-width: 62px;
+                max-width: 62px;
+                min-height: 36px;
+                max-height: 36px;
+                background: #121212;
+                border: 1px solid #333333;
+                border-radius: 7px;
+                color: #21d4fd;
+                font-family: JetBrains Mono, Consolas, monospace;
+                font-size: 14px;
+                font-weight: 900;
             }
             QCheckBox, QRadioButton {
                 spacing: 6px;
@@ -1776,10 +2018,17 @@ class LearnView(QWidget):
                 font-family: JetBrains Mono, Consolas, monospace;
                 font-size: 14px;
             }
+            #rangeText {
+                background: transparent;
+                color: #b8c7dc;
+                font-size: 12px;
+            }
+            #rangeText[rangeState="warning"] {
+                color: #ff4d4d;
+                font-weight: 800;
+            }
             """
         )
-
-
 def _peak_dump(peak: SpectrumPeak | None) -> dict[str, object] | None:
     """Return compact pitch-peak data for terminal diagnostics.
 

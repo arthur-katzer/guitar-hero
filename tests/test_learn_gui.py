@@ -11,7 +11,8 @@ from interfaces.audio.pitch import AudioDevice
 from interfaces.gui.main_window import MainWindow
 from interfaces.learn.midi_targets import MidiNoteEvent, group_note_events, section_from_targets
 from interfaces.learn.model import LearnSong, MidiNoteSpan, MidiTrackOption
-from interfaces.learn.view import LearnView, PianoRollTimeline
+from interfaces.learn.view import LearnView, MidiOverviewBar, PianoRollTimeline
+from interfaces.sandbox.view import SandboxView
 
 
 class LearnGuiTests(unittest.TestCase):
@@ -57,6 +58,96 @@ class LearnGuiTests(unittest.TestCase):
         self.assertIn("[ ] E2 (82.4 Hz)", view.expected_label.text())
         view.close()
 
+    def test_learn_view_auto_selects_clear_guitar_track_in_multi_track_song(self):
+        with patch("interfaces.learn.view.discover_midi_songs", return_value=[]), patch(
+            "interfaces.learn.view.demo_song",
+            return_value=self._multi_track_guitar_song(),
+        ):
+            view = LearnView()
+
+        state = view._controller.snapshot()
+        self.assertEqual(view._target_track.name, "Clean Guitar")
+        self.assertEqual(state.selected_count, 1)
+        self.assertEqual(state.current_target.midi_notes, [45])
+        self.assertTrue(view._target_radios[2].isChecked())
+        view.close()
+
+    def test_overview_controls_display_window_without_changing_practice_region(self):
+        with patch("interfaces.learn.view.discover_midi_songs", return_value=[]), patch(
+            "interfaces.learn.view.demo_song",
+            return_value=self._multi_track_song(),
+        ):
+            view = LearnView()
+
+        self.assertIsInstance(view.timeline_overview, MidiOverviewBar)
+        view._select_target_track(1)
+        practice_region = view._controller.region
+
+        view._set_display_window(0.25, 0.75)
+
+        start_time, end_time = view.timeline._timeline_bounds()
+        self.assertAlmostEqual(start_time, 0.25)
+        self.assertAlmostEqual(end_time, 0.75)
+        self.assertAlmostEqual(view.timeline_overview._display_window.start_time, 0.25)
+        self.assertAlmostEqual(view.timeline_overview._display_window.end_time, 0.75)
+        self.assertEqual(view._controller.region, practice_region)
+        view.close()
+
+    def test_run_mode_controls_are_not_present(self):
+        with patch("interfaces.learn.view.discover_midi_songs", return_value=[]), patch(
+            "interfaces.learn.view.demo_song",
+            return_value=self._long_song(),
+        ):
+            view = LearnView()
+
+        self.assertFalse(hasattr(view, "mode_combo"))
+        self.assertFalse(hasattr(view, "play_button"))
+        self.assertFalse(hasattr(view, "speed_combo"))
+        self.assertFalse(hasattr(view, "count_in_combo"))
+        self.assertFalse(hasattr(view, "loop_check"))
+        self.assertFalse(hasattr(view, "playhead_bar"))
+        self.assertFalse(hasattr(view, "restart_button"))
+        self.assertFalse(hasattr(view, "suggest_transpose_button"))
+        view.close()
+
+    def test_overview_background_click_does_not_steal_display_handle_drag(self):
+        with patch("interfaces.learn.view.discover_midi_songs", return_value=[]), patch(
+            "interfaces.learn.view.demo_song",
+            return_value=self._long_song(),
+        ):
+            view = LearnView()
+
+        view.timeline_overview.resize(800, 72)
+        view._set_display_window(0.0, 2.0)
+        before = view.timeline_overview._display_window
+        view.timeline_overview.mousePressEvent(FakeMouseEvent(650, 36))
+        view.timeline_overview.mouseMoveEvent(FakeMouseEvent(700, 36))
+
+        self.assertIsNone(view.timeline_overview._dragging)
+        self.assertEqual(view.timeline_overview._display_window, before)
+        view.close()
+
+    def test_overview_body_drag_pans_display_window_without_resizing(self):
+        with patch("interfaces.learn.view.discover_midi_songs", return_value=[]), patch(
+            "interfaces.learn.view.demo_song",
+            return_value=self._long_song(),
+        ):
+            view = LearnView()
+
+        view.timeline_overview.resize(800, 72)
+        view._set_display_window(1.0, 3.0)
+        before = view.timeline_overview._display_window
+
+        view.timeline_overview.mousePressEvent(FakeMouseEvent(310, 36))
+        view.timeline_overview.mouseMoveEvent(FakeMouseEvent(410, 36))
+
+        after = view.timeline_overview._display_window
+        self.assertEqual(view.timeline_overview._dragging, "body")
+        self.assertGreater(after.start_time, before.start_time)
+        self.assertAlmostEqual(after.end_time - after.start_time, before.end_time - before.start_time)
+        self.assertEqual(view.timeline._timeline_bounds(), (after.start_time, after.end_time))
+        view.close()
+
     def test_transpose_control_updates_labels_matching_and_range_warning(self):
         with patch("interfaces.learn.view.discover_midi_songs", return_value=[]), patch(
             "interfaces.learn.view.demo_song",
@@ -66,10 +157,19 @@ class LearnGuiTests(unittest.TestCase):
 
         self.assertEqual(view.transpose_spin.minimum(), -12)
         self.assertEqual(view.transpose_spin.maximum(), 12)
+        self.assertEqual(view.transpose_down_button.text(), "-")
+        self.assertEqual(view.transpose_up_button.text(), "+")
+        self.assertEqual(view.transpose_value_label.text(), "0")
+        self.assertIs(view.range_warning_label.parent(), view.transpose_panel)
         self.assertEqual(view._controller.snapshot().current_target.midi_notes, [38])
-        self.assertIn("Warning: chart contains notes below standard guitar range.", view.range_warning_label.text())
+        self.assertEqual(view.lowest_note_label.text(), "Lowest note: D2")
+        self.assertEqual(view.highest_note_label.text(), "Highest note: D2")
+        self.assertEqual(view.lowest_note_label.property("rangeState"), "warning")
+        self.assertEqual(view.highest_note_label.property("rangeState"), "normal")
+        self.assertEqual(view.range_warning_label.text(), "")
 
-        view.transpose_spin.setValue(2)
+        view.transpose_up_button.click()
+        view.transpose_up_button.click()
 
         state = view._controller.snapshot()
         self.assertEqual(state.current_target.original_midi_notes, [38])
@@ -77,12 +177,21 @@ class LearnGuiTests(unittest.TestCase):
         self.assertEqual(view.current_target_label.text(), "E2 (82.4 Hz)")
         self.assertIn("[ ] E2 (82.4 Hz)", view.expected_label.text())
         self.assertIn("D2 -> E2", view.transpose_preview_label.text())
-        self.assertIn("Guitar range: OK.", view.range_warning_label.text())
+        self.assertEqual(view.transpose_value_label.text(), "+2")
+        self.assertEqual(view.lowest_note_label.text(), "Lowest note: E2")
+        self.assertEqual(view.highest_note_label.text(), "Highest note: E2")
+        self.assertEqual(view.lowest_note_label.property("rangeState"), "normal")
+        self.assertEqual(view.highest_note_label.property("rangeState"), "normal")
+        self.assertEqual(view.range_warning_label.text(), "")
         self.assertEqual(view._target_track.section.targets[0].midi_notes, [38])
         self.assertEqual(view.timeline._transpose_semitones, 2)
+
+        view.transpose_down_button.click()
+        self.assertEqual(view.transpose_spin.value(), 1)
+        self.assertEqual(view.transpose_value_label.text(), "+1")
         view.close()
 
-    def test_visible_and_audible_track_controls_are_independent(self):
+    def test_visible_track_control_changes_only_timeline_visibility(self):
         with patch("interfaces.learn.view.discover_midi_songs", return_value=[]), patch(
             "interfaces.learn.view.demo_song",
             return_value=self._multi_track_song(),
@@ -93,25 +202,33 @@ class LearnGuiTests(unittest.TestCase):
         view._set_track_visible(2, False)
 
         self.assertNotIn(2, view.timeline._visible_track_indexes)
-        self.assertIn(2, view._audible_track_indexes())
         self.assertEqual(view._controller.snapshot().current_target.midi_notes, [40])
-
-        view._set_track_audible(1, False)
-        self.assertIn(1, view.timeline._visible_track_indexes)
-        self.assertNotIn(1, view._audible_track_indexes())
+        self.assertFalse(hasattr(view, "_set_track_audible"))
+        self.assertFalse(hasattr(view, "_set_track_solo"))
         view.close()
 
-    def test_solo_limits_audible_tracks_without_changing_visibility(self):
+    def test_side_rail_switches_between_practice_readouts_and_tracks(self):
         with patch("interfaces.learn.view.discover_midi_songs", return_value=[]), patch(
             "interfaces.learn.view.demo_song",
             return_value=self._multi_track_song(),
         ):
             view = LearnView()
 
-        view._set_track_solo(2, True)
+        view._select_target_track(1)
+        selected_before = view._controller.snapshot().current_target
 
-        self.assertEqual(view._audible_track_indexes(), frozenset({2}))
-        self.assertEqual(view.timeline._visible_track_indexes, frozenset({1, 2}))
+        self.assertEqual(view.side_stack.currentIndex(), 0)
+        self.assertTrue(view.practice_view_button.isChecked())
+        view._show_tracks_panel()
+
+        self.assertEqual(view.side_stack.currentIndex(), 1)
+        self.assertTrue(view.tracks_view_button.isChecked())
+        self.assertIs(view._controller.snapshot().current_target, selected_before)
+
+        view._show_practice_panel()
+
+        self.assertEqual(view.side_stack.currentIndex(), 0)
+        self.assertTrue(view.practice_view_button.isChecked())
         view.close()
 
     def test_update_frame_shows_live_note_without_waiting_for_pluck(self):
@@ -130,7 +247,7 @@ class LearnGuiTests(unittest.TestCase):
         self.assertIn("E2", view.detected_label.text())
         view.close()
 
-    def test_update_frame_shows_detected_note_while_paused_without_advancing_targets(self):
+    def test_update_frame_advances_wait_practice_without_play_button(self):
         with patch("interfaces.learn.view.discover_midi_songs", return_value=[]), patch(
             "interfaces.learn.view.demo_song",
             return_value=self._multi_track_song(),
@@ -138,7 +255,6 @@ class LearnGuiTests(unittest.TestCase):
             view = LearnView()
 
         view._select_target_track(1)
-        before = view._controller.snapshot()
         view._input = FakeInput(frame=live_frame(midi=40))
         view._pluck_detector = FakePluckDetector(
             pluck=SimpleNamespace(midi=40, confidence=0.95, note_name="E2")
@@ -147,10 +263,9 @@ class LearnGuiTests(unittest.TestCase):
         view._update_frame()
 
         after = view._controller.snapshot()
-        self.assertEqual(before.current_index, after.current_index)
-        self.assertEqual(after.passed_count, 0)
+        self.assertEqual(after.passed_count, 1)
         self.assertIn("E2", view.detected_label.text())
-        self.assertEqual(view.status_label.text(), "Detected E2 while paused.")
+        self.assertEqual(view.status_label.text(), "Detected E2.")
         view.close()
 
     def test_learn_input_starts_from_selected_device(self):
@@ -174,6 +289,61 @@ class LearnGuiTests(unittest.TestCase):
         self.assertEqual(fake_input.started_device_index, 7)
         self.assertTrue(view._running)
         self.assertEqual(view.status_label.text(), "Listening.")
+        view.close()
+
+    def test_input_button_uses_accessible_shape_states(self):
+        devices = [AudioDevice(index=7, name="USB Guitar", input_channels=1, default_sample_rate=48000)]
+        fake_input = FakeInput(frame=None)
+        with patch("interfaces.learn.view.discover_midi_songs", return_value=[]), patch(
+            "interfaces.learn.view.demo_song",
+            return_value=self._multi_track_song(),
+        ), patch("interfaces.learn.view.list_input_devices", return_value=devices), patch(
+            "interfaces.learn.view.LivePitchInput",
+            return_value=fake_input,
+        ):
+            view = LearnView()
+
+        self.assertEqual(view.start_button.text(), "")
+        self.assertEqual(view.start_button.property("inputState"), "stopped")
+        self.assertEqual(view.start_button.toolTip(), "Start input")
+
+        view.start_input()
+
+        self.assertEqual(view.start_button.text(), "")
+        self.assertEqual(view.start_button.property("inputState"), "running")
+        self.assertEqual(view.start_button.toolTip(), "Stop input")
+
+        view.stop_input()
+
+        self.assertEqual(view.start_button.text(), "")
+        self.assertEqual(view.start_button.property("inputState"), "stopped")
+        self.assertEqual(view.start_button.toolTip(), "Start input")
+        view.close()
+
+    def test_sandbox_input_button_uses_same_shape_states(self):
+        devices = [AudioDevice(index=7, name="USB Guitar", input_channels=1, default_sample_rate=48000)]
+        fake_input = FakeInput(frame=None)
+        with patch("interfaces.sandbox.view.list_input_devices", return_value=devices), patch(
+            "interfaces.sandbox.view.LivePitchInput",
+            return_value=fake_input,
+        ), patch("interfaces.sandbox.view.QTimer.singleShot"):
+            view = SandboxView()
+
+        self.assertEqual(view.start_button.text(), "")
+        self.assertEqual(view.start_button.property("inputState"), "stopped")
+        self.assertEqual(view.start_button.toolTip(), "Start input")
+
+        view.start_input()
+
+        self.assertEqual(view.start_button.text(), "")
+        self.assertEqual(view.start_button.property("inputState"), "running")
+        self.assertEqual(view.start_button.toolTip(), "Stop input")
+
+        view.stop_input()
+
+        self.assertEqual(view.start_button.text(), "")
+        self.assertEqual(view.start_button.property("inputState"), "stopped")
+        self.assertEqual(view.start_button.toolTip(), "Start input")
         view.close()
 
     def _multi_track_song(self) -> LearnSong:
@@ -222,6 +392,58 @@ class LearnGuiTests(unittest.TestCase):
             ],
         )
 
+    def _long_song(self) -> LearnSong:
+        target_events = [
+            MidiNoteEvent(0.0, 0.5, 40, 1.0, 0),
+            MidiNoteEvent(5.5, 6.0, 45, 1.0, 0),
+        ]
+        target_section = section_from_targets(group_note_events(target_events))
+        return LearnSong(
+            title="Long Test Song",
+            path=None,
+            tracks=[
+                MidiTrackOption(
+                    index=1,
+                    name="Long Target",
+                    channel_labels=("1",),
+                    section=target_section,
+                    notes=(
+                        MidiNoteSpan(0.0, 0.5, 40, 1.0, 0),
+                        MidiNoteSpan(5.5, 6.0, 45, 1.0, 0),
+                    ),
+                    color="#21d4fd",
+                ),
+            ],
+        )
+
+    def _multi_track_guitar_song(self) -> LearnSong:
+        piano_events = [MidiNoteEvent(0.0, 0.5, 60, 1.0, 0)]
+        guitar_events = [MidiNoteEvent(0.0, 0.5, 45, 1.0, 1)]
+        piano_section = section_from_targets(group_note_events(piano_events))
+        guitar_section = section_from_targets(group_note_events(guitar_events))
+        return LearnSong(
+            title="Guitar Track Test Song",
+            path=None,
+            tracks=[
+                MidiTrackOption(
+                    index=1,
+                    name="Electric Piano",
+                    channel_labels=("1",),
+                    section=piano_section,
+                    notes=(MidiNoteSpan(0.0, 0.5, 60, 1.0, 0),),
+                    color="#21d4fd",
+                ),
+                MidiTrackOption(
+                    index=2,
+                    name="Clean Guitar",
+                    channel_labels=("2",),
+                    section=guitar_section,
+                    notes=(MidiNoteSpan(0.0, 0.5, 45, 1.0, 1),),
+                    color="#ff4d4d",
+                ),
+            ],
+        )
+
 
 class FakeInput:
     def __init__(self, frame):
@@ -248,6 +470,14 @@ class FakePluckDetector:
         if self.pluck is not None:
             self.current_pluck = self.pluck
         return self.pluck
+
+
+class FakeMouseEvent:
+    def __init__(self, x, y):
+        self._point = SimpleNamespace(x=lambda: x, y=lambda: y)
+
+    def pos(self):
+        return self._point
 
 
 def live_frame(midi: int | None):

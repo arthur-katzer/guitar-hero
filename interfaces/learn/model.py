@@ -26,13 +26,13 @@ class Feedback(str, Enum):
 
 
 class LearnMode(str, Enum):
-    """Practice timing policies supported by the first Learn implementation.
+    """Practice policy supported by Learn.
 
     @author Codex - created Learn mode timing vocabulary.
+    @author Codex - removed Learn Run Mode.
     """
 
     WAIT = "Wait Mode"
-    RUN = "Run Mode"
 
 
 @dataclass(frozen=True)
@@ -183,11 +183,11 @@ class PracticeRegion:
 class MidiNoteSpan:
     """One MIDI note span used by Learn's piano-roll study timeline.
 
-    Learn targets are grouped teaching policy. Note spans are display and
-    playback material, which lets accompaniment tracks stay visible or audible
-    without becoming expected user input.
+    Learn targets are grouped teaching policy. Note spans are display material,
+    which lets context tracks stay visible without becoming expected user input.
 
     @author Codex - added piano-roll timeline note model.
+    @author Codex - removed Learn Run Mode playback controls.
     """
 
     start_time: float
@@ -219,11 +219,12 @@ class MidiTrackOption:
 
     Track metadata stays separate from Qt combo boxes so tests can enforce the
     explicit-track-choice rule without depending on widgets. Timeline notes and
-    playback metadata live here because they describe the loaded MIDI part, not
+    display metadata live here because they describe the loaded MIDI part, not
     the Learn matching policy.
 
     @author Codex - created Learn MIDI track option model.
     @author Codex - added piano-roll track metadata.
+    @author Codex - removed Learn Run Mode playback controls.
     """
 
     index: int
