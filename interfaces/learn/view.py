@@ -871,6 +871,7 @@ class LearnView(QWidget):
         @author Codex - grouped Learn transpose controls and range readout.
         @author Codex - replaced visible transpose spinbox with segmented stepper.
         @author Codex - arranged Learn transpose details as explicit note readouts.
+        @author Codex - compacted Learn transpose details into one toolbar line.
         """
 
         root = QVBoxLayout(self)
@@ -904,24 +905,19 @@ class LearnView(QWidget):
         self.status_label.setObjectName("status")
         root.addWidget(self.status_label)
 
-        transpose_layout = QVBoxLayout(self.transpose_panel)
+        transpose_layout = QHBoxLayout(self.transpose_panel)
         transpose_layout.setContentsMargins(10, 8, 10, 8)
-        transpose_layout.setSpacing(4)
+        transpose_layout.setSpacing(8)
         transpose_title = QLabel("Transpose")
         transpose_title.setObjectName("transposeTitle")
         transpose_layout.addWidget(transpose_title)
         self.transpose_spin.setVisible(False)
-        transpose_steps = QHBoxLayout()
-        transpose_steps.setContentsMargins(0, 0, 0, 0)
-        transpose_steps.setSpacing(6)
-        transpose_steps.addWidget(self.transpose_down_button)
-        transpose_steps.addWidget(self.transpose_up_button)
-        transpose_steps.addWidget(self.transpose_value_label)
-        transpose_steps.addStretch(1)
-        transpose_layout.addLayout(transpose_steps)
+        transpose_layout.addWidget(self.transpose_down_button)
+        transpose_layout.addWidget(self.transpose_up_button)
+        transpose_layout.addWidget(self.transpose_value_label)
         transpose_layout.addWidget(self.lowest_note_label)
         transpose_layout.addWidget(self.highest_note_label)
-        transpose_layout.addWidget(self.range_warning_label)
+        transpose_layout.addStretch(1)
 
         side = QWidget()
         side.setMinimumWidth(340)
