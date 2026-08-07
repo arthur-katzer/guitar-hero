@@ -1,1 +1,0 @@
-"""Throwaway GUI highlight prototypes."""

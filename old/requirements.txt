@@ -1,9 +1,0 @@
-numpy
-scipy
-sounddevice
-mido
-matplotlib
-librosa
-imageio-ffmpeg
-PySide6
-pyqtgraph

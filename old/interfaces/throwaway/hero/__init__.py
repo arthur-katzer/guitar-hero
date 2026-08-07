@@ -1,2 +1,0 @@
-"""Player / Hero mode widgets."""
-
