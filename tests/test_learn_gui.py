@@ -40,19 +40,22 @@ class LearnGuiTests(unittest.TestCase):
 
             window.close()
 
-    def test_main_menu_hides_and_disables_play_mode(self):
+    def test_main_menu_opens_play_mode(self):
         with patch("interfaces.learn.view.list_input_devices", return_value=[]), patch(
             "interfaces.sandbox.view.list_input_devices",
             return_value=[],
         ):
             window = MainWindow()
 
-            self.assertEqual([button.text() for button in window.menu.buttons], [text("menu.learn"), text("menu.sandbox")])
-            self.assertFalse(hasattr(window, "play"))
+            self.assertEqual(
+                [button.text() for button in window.menu.buttons],
+                [text("menu.play"), text("menu.learn"), text("menu.sandbox")],
+            )
+            self.assertTrue(hasattr(window, "play"))
 
             window._open_option("Play")
 
-            self.assertIs(window.screens.currentWidget(), window.background)
+            self.assertIs(window.screens.currentWidget(), window.play)
             window.close()
 
     def test_learn_view_uses_piano_roll_and_track_panel_controls(self):

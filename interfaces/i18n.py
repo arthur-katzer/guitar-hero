@@ -10,6 +10,7 @@ SUPPORTED_LANGUAGES: Final = frozenset({"en", "pt_BR"})
 
 _TEXT: Final = {
     "en": {
+        "menu.play": "Play",
         "menu.learn": "Learn",
         "menu.sandbox": "Sandbox",
         "screen.learn.title": "Learn",
@@ -90,6 +91,7 @@ _TEXT: Final = {
         "sandbox.waiting_pluck": "Waiting for pluck event",
     },
     "pt_BR": {
+        "menu.play": "Tocar",
         "menu.learn": "Prática",
         "menu.sandbox": "Análise",
         "screen.learn.title": "Prática",

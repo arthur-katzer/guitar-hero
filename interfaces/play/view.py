@@ -315,6 +315,13 @@ class PianoRollTimeline(QWidget):
         self._passed_indexes: frozenset[int] = frozenset()
         self._missed_indexes: frozenset[int] = frozenset()
         self._transpose_semitones = 0
+        self._playhead_time: float | None = None
+
+    def set_playhead(self, playhead_time: float | None) -> None:
+        """Show the source-MIDI playback position on the piano roll."""
+
+        self._playhead_time = playhead_time
+        self.update()
 
     def set_song(self, song: PlaySong | None) -> None:
         """Render the loaded song context on the piano roll.
@@ -432,6 +439,10 @@ class PianoRollTimeline(QWidget):
         self._paint_pitch_grid(painter, roll_rect)
         self._paint_time_grid(painter, roll_rect)
         self._paint_notes(painter, roll_rect)
+        if self._playhead_time is not None:
+            x = self._time_to_x(self._playhead_time)
+            painter.setPen(QPen(QColor("#ffffff"), 2))
+            painter.drawLine(int(x), int(roll_rect.top()), int(x), int(roll_rect.bottom()))
         painter.end()
 
     def _roll_rect(self) -> QRectF:
